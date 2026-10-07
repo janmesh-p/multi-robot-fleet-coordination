@@ -1,0 +1,7 @@
+fleet_manager:
+  ros__parameters:
+    map_path: ""            # set by launch file
+    allocator: nearest      # nearest | hungarian | auction | cost_aware
+    planner: independent_astar  # independent_astar | prioritized | cooperative_astar | cbs | ecbs
+    fleet_size: 5
+    tick_hz: 10.0

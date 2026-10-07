@@ -1,0 +1,10 @@
+build/
+install/
+log/
+benchmarks/results/*
+!benchmarks/results/.gitkeep
+benchmarks/plots/
+__pycache__/
+*.pyc
+.vscode/
+.idea/

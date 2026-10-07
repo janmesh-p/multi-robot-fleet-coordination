@@ -1,0 +1,16 @@
+<?xml version="1.0"?>
+<package format="3">
+  <name>fleet_ros</name>
+  <version>0.1.0</version>
+  <description>ROS 2 nodes for multi-robot fleet coordination.</description>
+  <maintainer email="janmesh.4300@gmail.com">Janmesh Patel</maintainer>
+  <license>TBD</license>
+
+  <buildtool_depend>ament_cmake</buildtool_depend>
+  <depend>rclcpp</depend>
+  <depend>fleet_msgs</depend>
+
+  <export>
+    <build_type>ament_cmake</build_type>
+  </export>
+</package>
