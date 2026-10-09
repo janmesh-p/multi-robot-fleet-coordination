@@ -1,7 +1,4 @@
 fleet_manager:
   ros__parameters:
-    map_path: ""            # set by launch file
-    allocator: nearest      # nearest | hungarian | auction | cost_aware
-    planner: independent_astar  # independent_astar | prioritized | cooperative_astar | cbs | ecbs
-    fleet_size: 5
-    tick_hz: 10.0
+    config_file: ""   # set by the launch file; fleet_core run config (YAML)
+    tick_hz: 1.0      # 1 step = 1 simulated second

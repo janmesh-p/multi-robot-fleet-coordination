@@ -1,0 +1,15 @@
+# clang-format 18.1.3 (pinned in CI; install with: pip install clang-format==18.1.3)
+BasedOnStyle: Google
+ColumnLimit: 100
+DerivePointerAlignment: false
+PointerAlignment: Left
+IncludeBlocks: Regroup
+IncludeCategories:
+  - Regex: '^<(yaml-cpp|gtest|gmock|rclcpp|ament_index_cpp)/'
+    Priority: 3
+  - Regex: '^<.*\.h>'
+    Priority: 1
+  - Regex: '^<.*>'
+    Priority: 2
+  - Regex: '.*'
+    Priority: 4

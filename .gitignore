@@ -1,6 +1,8 @@
-build/
+build*/
 install/
 log/
+.venv/
+compile_commands.json
 benchmarks/results/*
 !benchmarks/results/.gitkeep
 benchmarks/plots/

@@ -1,43 +1,79 @@
-#include <cassert>
-#include <iostream>
+#include <filesystem>
+#include <stdexcept>
+#include <vector>
 
-#include "fleet_core/fault_injector.hpp"
-#include "fleet_core/grid_map.hpp"
-#include "fleet_core/order_generator.hpp"
+#include <gtest/gtest.h>
 
-using namespace fleet_core;
+#include "fleet_core/world/grid_map.hpp"
 
-int main() {
-  const auto m = GridMap::fromString(
+namespace fleet_core {
+namespace {
+
+const std::filesystem::path kRepo = std::filesystem::path(FLEET_REPO_ROOT).lexically_normal();
+
+GridMap smallMap() {
+  return GridMap::fromString(
       "; test map\n"
       "P...D\n"
       ".#.#.\n"
       ".....\n");
-
-  assert(m.rows() == 3 && m.cols() == 5);
-  assert(m.pickups().size() == 1 && m.dropoffs().size() == 1);
-  assert(m.isFree({0, 0}));
-  assert(!m.isFree({1, 1}));
-  assert(!m.isFree({-1, 0}));
-  assert(m.neighbors({0, 0}).size() == 2);
-
-  auto mm = m;
-  mm.block({0, 1});
-  assert(!mm.isFree({0, 1}));
-  assert(mm.neighbors({0, 0}).size() == 1);
-  mm.unblock({0, 1});
-  assert(mm.isFree({0, 1}));
-
-  OrderGenerator gen(m, 2.0, 7);
-  int total = 0;
-  for (Timestep t = 0; t < 100; ++t) total += static_cast<int>(gen.step(t).size());
-  assert(total > 100 && total < 300);
-
-  FaultInjector fi({{10, FaultType::kRobotDeath, 3}, {5, FaultType::kBlockAisle, -1, {2, 2}}});
-  assert(fi.due(4).empty());
-  assert(fi.due(5).size() == 1);
-  assert(fi.due(20).size() == 1);
-
-  std::cout << "fleet_core tests passed\n";
-  return 0;
 }
+
+TEST(GridMap, ParsesStationsAndObstacles) {
+  const GridMap m = smallMap();
+  EXPECT_EQ(m.rows(), 3);
+  EXPECT_EQ(m.cols(), 5);
+  EXPECT_EQ(m.freeCellCount(), 13);
+  ASSERT_EQ(m.pickups().size(), 1U);
+  EXPECT_TRUE(m.pickups()[0] == (Cell{0, 0}));
+  ASSERT_EQ(m.dropoffs().size(), 1U);
+  EXPECT_TRUE(m.dropoffs()[0] == (Cell{0, 4}));
+  EXPECT_TRUE(m.isFree({0, 0}));
+  EXPECT_FALSE(m.isFree({1, 1}));
+  EXPECT_FALSE(m.isFree({-1, 0}));
+  EXPECT_FALSE(m.isFree({3, 0}));
+}
+
+TEST(GridMap, NeighborsComeInFixedOrder) {
+  const GridMap m = smallMap();
+  EXPECT_TRUE(m.neighbors({2, 2}) == (std::vector<Cell>{{1, 2}, {2, 1}, {2, 3}}));
+  EXPECT_TRUE(m.neighbors({0, 0}) == (std::vector<Cell>{{1, 0}, {0, 1}}));
+}
+
+TEST(GridMap, DynamicBlocks) {
+  GridMap m = smallMap();
+  m.block({0, 1});
+  EXPECT_TRUE(m.isBlocked({0, 1}));
+  EXPECT_FALSE(m.isFree({0, 1}));
+  EXPECT_TRUE(m.isStaticFree({0, 1}));
+  EXPECT_EQ(m.neighbors({0, 0}).size(), 1U);
+  EXPECT_EQ(m.freeCellCount(), 13);
+  m.unblock({0, 1});
+  EXPECT_TRUE(m.isFree({0, 1}));
+  EXPECT_THROW(m.block({9, 9}), std::out_of_range);
+}
+
+TEST(GridMap, RejectsBadInput) {
+  EXPECT_THROW(GridMap::fromString(""), std::runtime_error);
+  EXPECT_THROW(GridMap::fromString("; only a comment\n"), std::runtime_error);
+  EXPECT_THROW(GridMap::fromString("..\n...\n"), std::runtime_error);
+  EXPECT_THROW(GridMap::fromString("..x\n"), std::runtime_error);
+  EXPECT_THROW(GridMap::fromFile("/no/such/map.txt"), std::runtime_error);
+}
+
+TEST(GridMap, HandlesWindowsLineEndings) {
+  const GridMap m = GridMap::fromString("P.D\r\n...\r\n");
+  EXPECT_EQ(m.cols(), 3);
+  EXPECT_EQ(m.rows(), 2);
+}
+
+TEST(GridMap, LoadsShippedMap) {
+  const GridMap m = GridMap::fromFile((kRepo / "maps" / "warehouse_small.txt").string());
+  EXPECT_EQ(m.rows(), 16);
+  EXPECT_EQ(m.cols(), 30);
+  EXPECT_EQ(m.pickups().size(), 5U);
+  EXPECT_EQ(m.dropoffs().size(), 5U);
+}
+
+}  // namespace
+}  // namespace fleet_core

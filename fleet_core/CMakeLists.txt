@@ -1,40 +1,66 @@
 cmake_minimum_required(VERSION 3.16)
-project(fleet_core LANGUAGES CXX)
+project(fleet_core VERSION 0.1.0 LANGUAGES CXX)
 
-set(CMAKE_CXX_STANDARD 17)
-set(CMAKE_CXX_STANDARD_REQUIRED ON)
-if(NOT CMAKE_BUILD_TYPE)
-  set(CMAKE_BUILD_TYPE Release)
+# Standalone build: library, apps, tests. Inside fleet_ros (add_subdirectory): library only.
+if(CMAKE_SOURCE_DIR STREQUAL PROJECT_SOURCE_DIR)
+  set(FLEET_CORE_TOP_LEVEL ON)
+else()
+  set(FLEET_CORE_TOP_LEVEL OFF)
 endif()
-add_compile_options(-Wall -Wextra -Wpedantic)
+
+option(FLEET_CORE_BUILD_TESTS "Build fleet_core unit tests" ${FLEET_CORE_TOP_LEVEL})
+option(FLEET_CORE_BUILD_APPS "Build fleet_core apps (run_sim)" ${FLEET_CORE_TOP_LEVEL})
+option(FLEET_WERROR "Treat compiler warnings as errors" ON)
+option(FLEET_SANITIZE "Build with AddressSanitizer and UndefinedBehaviorSanitizer" OFF)
+
+if(FLEET_CORE_TOP_LEVEL)
+  if(NOT CMAKE_BUILD_TYPE AND NOT CMAKE_CONFIGURATION_TYPES)
+    set(CMAKE_BUILD_TYPE Release CACHE STRING "Build type" FORCE)
+  endif()
+  set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
+endif()
+
+list(APPEND CMAKE_MODULE_PATH "${CMAKE_CURRENT_SOURCE_DIR}/cmake")
+include(FleetTargets)
+
+# yaml-cpp: apt libyaml-cpp-dev, rosdep key yaml-cpp. Version 0.7 (Ubuntu 22.04) names the
+# target yaml-cpp; 0.8 (Ubuntu 24.04) names it yaml-cpp::yaml-cpp.
+find_package(yaml-cpp REQUIRED)
+if(TARGET yaml-cpp::yaml-cpp)
+  set(FLEET_YAML_TARGET yaml-cpp::yaml-cpp)
+elseif(TARGET yaml-cpp)
+  set(FLEET_YAML_TARGET yaml-cpp)
+else()
+  message(FATAL_ERROR "yaml-cpp was found but defines no CMake target; install libyaml-cpp-dev >= 0.7")
+endif()
 
 add_library(fleet_core
-  src/grid_map.cpp
-  src/registry.cpp
-  src/order_generator.cpp
-  src/fault_injector.cpp
-  src/metrics_logger.cpp
-  src/traffic_manager.cpp
-  src/fleet_manager.cpp
+  src/common/config.cpp
+  src/common/rng.cpp
+  src/world/grid_map.cpp
+  src/tasks/order_generator.cpp
+  src/allocation/task_allocator.cpp
+  src/planning/path_planner.cpp
+  src/faults/fault_injector.cpp
+  src/metrics/metrics_collector.cpp
 )
-target_include_directories(fleet_core PUBLIC
-  $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
-  $<INSTALL_INTERFACE:include>
-)
+add_library(fleet_core::fleet_core ALIAS fleet_core)
+target_include_directories(fleet_core PUBLIC "${CMAKE_CURRENT_SOURCE_DIR}/include")
+target_compile_features(fleet_core PUBLIC cxx_std_17)
+target_link_libraries(fleet_core PRIVATE ${FLEET_YAML_TARGET})
 set_target_properties(fleet_core PROPERTIES POSITION_INDEPENDENT_CODE ON)
+fleet_configure_target(fleet_core)
 
-add_executable(run_sim src/run_sim_main.cpp)
-target_link_libraries(run_sim PRIVATE fleet_core)
-
-include(CTest)
-if(BUILD_TESTING)
-  add_executable(test_fleet_core tests/test_grid_map.cpp)
-  target_compile_options(test_fleet_core PRIVATE -UNDEBUG)
-  target_link_libraries(test_fleet_core PRIVATE fleet_core)
-  add_test(NAME test_fleet_core COMMAND test_fleet_core)
+if(FLEET_CORE_BUILD_APPS)
+  add_executable(run_sim apps/run_sim.cpp)
+  target_link_libraries(run_sim PRIVATE fleet_core)
+  fleet_configure_target(run_sim)
+  install(TARGETS run_sim RUNTIME DESTINATION bin)
 endif()
 
-install(TARGETS fleet_core run_sim EXPORT fleet_coreTargets
-  ARCHIVE DESTINATION lib LIBRARY DESTINATION lib RUNTIME DESTINATION bin)
-install(DIRECTORY include/ DESTINATION include)
-install(EXPORT fleet_coreTargets NAMESPACE fleet_core:: DESTINATION lib/cmake/fleet_core)
+if(FLEET_CORE_BUILD_TESTS)
+  enable_testing()
+  find_package(GTest REQUIRED)
+  add_subdirectory(tests)
+  fleet_add_header_check(fleet_core "${CMAKE_CURRENT_SOURCE_DIR}/include")
+endif()

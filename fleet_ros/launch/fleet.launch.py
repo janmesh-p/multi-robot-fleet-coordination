@@ -9,15 +9,21 @@ from launch_ros.actions import Node
 
 def generate_launch_description():
     share = get_package_share_directory("fleet_ros")
-    default_map = os.path.join(share, "maps", "warehouse_small.txt")
+    default_config = os.path.join(share, "benchmarks", "configs", "default.yaml")
     return LaunchDescription([
-        DeclareLaunchArgument("map_path", default_value=default_map),
+        DeclareLaunchArgument(
+            "config_file",
+            default_value=default_config,
+            description="fleet_core run config (YAML)",
+        ),
         Node(
             package="fleet_ros",
             executable="fleet_manager_node",
             name="fleet_manager",
-            parameters=[os.path.join(share, "config", "fleet.yaml"),
-                        {"map_path": LaunchConfiguration("map_path")}],
+            parameters=[
+                os.path.join(share, "config", "fleet.yaml"),
+                {"config_file": LaunchConfiguration("config_file")},
+            ],
             output="screen",
         ),
     ])

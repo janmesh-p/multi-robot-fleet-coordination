@@ -1,0 +1,55 @@
+name: ci
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  core:
+    name: fleet_core (${{ matrix.name }})
+    runs-on: ubuntu-22.04
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: release
+            build_type: Release
+            sanitize: "OFF"
+          - name: debug-asan-ubsan
+            build_type: Debug
+            sanitize: "ON"
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends ninja-build g++ libyaml-cpp-dev libgtest-dev
+
+      - name: Configure
+        run: >
+          cmake -S fleet_core -B build -G Ninja
+          -DCMAKE_BUILD_TYPE=${{ matrix.build_type }}
+          -DFLEET_SANITIZE=${{ matrix.sanitize }}
+
+      - name: Build
+        run: cmake --build build
+
+      - name: Test
+        run: ctest --test-dir build --output-on-failure
+
+      - name: Validate shipped config
+        run: ./build/run_sim --config benchmarks/configs/default.yaml
+
+  format:
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install clang-format 18.1.3
+        run: |
+          python3 -m venv .venv
+          .venv/bin/pip install --quiet clang-format==18.1.3
+
+      - name: Check formatting
+        run: git ls-files '*.cpp' '*.hpp' | xargs .venv/bin/clang-format --dry-run --Werror
