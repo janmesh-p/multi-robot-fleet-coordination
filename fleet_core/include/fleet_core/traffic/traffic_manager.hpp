@@ -1,6 +1,7 @@
 #pragma once
 
 #include <cstdint>
+#include <map>
 #include <vector>
 
 #include "fleet_core/common/config.hpp"
@@ -18,11 +19,9 @@ struct CommittedPlan {
 
 // Turns committed plans into motion permits, so plans stay collision-free when robots run late.
 //
-// Stage 5 adds the execution dependency graph, intersection reservations, wait-for deadlock
-// detection, and the starvation guard, each behind its feature toggle. With all of them off,
-// every planned cell is permitted: the uncoordinated Stage 2 baseline.
-//
-// Interface only. Implementation lands in Stage 2 (permit all) and Stage 5.
+// Today every planned cell is permitted: the uncoordinated baseline. Stage 5 adds the execution
+// dependency graph, intersection reservations, wait-for deadlock detection, and the starvation
+// guard, each behind its feature toggle; until then those toggles have no effect.
 class TrafficManager {
  public:
   explicit TrafficManager(const FeatureToggles& features);
@@ -36,12 +35,12 @@ class TrafficManager {
   // permitted_until per robot (index == RobotId); -1 for robots without a plan.
   std::vector<int32_t> permits(const WorldModel& world) const;
 
-  // Robots on a wait-for cycle. Empty when the fleet can make progress.
+  // Robots on a wait-for cycle. Throws std::logic_error until Stage 5 implements it.
   std::vector<RobotId> deadlocked(const WorldModel& world) const;
 
  private:
   FeatureToggles features_;
-  std::vector<CommittedPlan> plans_{};
+  std::map<RobotId, CommittedPlan> plans_{};
 };
 
 }  // namespace fleet_core

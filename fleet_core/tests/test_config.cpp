@@ -256,5 +256,41 @@ TEST(Config, ValidateCatchesConfigsBuiltInCode) {
   EXPECT_THROW(validateConfig(c), ConfigError);
 }
 
+TEST(Config, MapGeneratorParsesAndRoundTrips) {
+  const Config c = parse(
+      "map:\n"
+      "  generator: {blocks_x: 3, blocks_y: 2, block_width: 4, block_height: 1, stations: 2,"
+      " parking_rows: 2}\n");
+  ASSERT_TRUE(c.map.generator.has_value());
+  EXPECT_TRUE(c.map.file.empty());
+  EXPECT_EQ(c.map.generator->blocks_x, 3);
+  EXPECT_EQ(c.map.generator->parking_rows, 2);
+  const std::string dumped = dumpConfig(c);
+  EXPECT_EQ(dumpConfig(parseConfig(dumped, "/")), dumped);
+
+  const Config defaults = parse("map: {generator: {}}\n");
+  ASSERT_TRUE(defaults.map.generator.has_value());
+  EXPECT_EQ(defaults.map.generator->blocks_x, MapGeneratorConfig{}.blocks_x);
+}
+
+TEST(Config, MapGeneratorRules) {
+  expectError("map: {file: warehouse_small.txt, generator: {}}\n",
+              {"either 'file' or 'generator'"});
+  expectError("map: {generator: {stations: 99}}\n", {"map.generator.stations", "for this layout"});
+  expectError("map: {generator: {blocks_x: 0}}\n", {"map.generator.blocks_x"});
+  expectError("map: {generator: {blcoks_x: 2}}\n", {"map.generator.blcoks_x", "unknown key"});
+  Config c;
+  c.map.generator = MapGeneratorConfig{};
+  c.map.file = kMaps / "warehouse_small.txt";
+  EXPECT_THROW(validateConfig(c), ConfigError);  // both set
+}
+
+TEST(Config, GeneratedSizeFormulas) {
+  const MapGeneratorConfig g{5, 4, 6, 2, 4, 1};
+  EXPECT_EQ(generatedRows(g), 15);
+  EXPECT_EQ(generatedCols(g), 38);
+  EXPECT_EQ(maxStations(g), 6);
+}
+
 }  // namespace
 }  // namespace fleet_core

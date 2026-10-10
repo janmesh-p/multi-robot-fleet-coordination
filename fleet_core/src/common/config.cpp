@@ -324,12 +324,27 @@ void parseRun(const YAML::Node& node, RunConfig& run) {
 void parseMap(const YAML::Node& node, const std::filesystem::path& base_dir, MapConfig& map) {
   Section s(node, "map");
   const auto file = s.take("file");
+  const auto generator = s.take("generator");
   s.finish();
-  if (!file) fail("map", node, "missing key 'file'");
-  std::filesystem::path path = readString(*file, "map.file");
-  if (path.empty()) fail("map.file", *file, "must not be empty");
-  if (path.is_relative()) path = std::filesystem::absolute(base_dir) / path;
-  map.file = path.lexically_normal();
+  if (file && generator) fail("map", node, "set either 'file' or 'generator', not both");
+  if (!file && !generator) fail("map", node, "missing key 'file' or 'generator'");
+  if (file) {
+    std::filesystem::path path = readString(*file, "map.file");
+    if (path.empty()) fail("map.file", *file, "must not be empty");
+    if (path.is_relative()) path = std::filesystem::absolute(base_dir) / path;
+    map.file = path.lexically_normal();
+    return;
+  }
+  MapGeneratorConfig layout;
+  Section g(*generator, "map.generator");
+  field(g, "blocks_x", layout.blocks_x, readInt32);
+  field(g, "blocks_y", layout.blocks_y, readInt32);
+  field(g, "block_width", layout.block_width, readInt32);
+  field(g, "block_height", layout.block_height, readInt32);
+  field(g, "stations", layout.stations, readInt32);
+  field(g, "parking_rows", layout.parking_rows, readInt32);
+  g.finish();
+  map.generator = layout;
 }
 
 void parseFleet(const YAML::Node& node, FleetConfig& fleet) {
@@ -438,6 +453,34 @@ void require(bool ok, const std::string& message) {
 // -----------------------------------------------------------------------------------------------
 // Public API
 
+int32_t generatedRows(const MapGeneratorConfig& g) {
+  return 2 * g.parking_rows + g.blocks_y * (g.block_height + 1) + 1;
+}
+
+int32_t generatedCols(const MapGeneratorConfig& g) { return g.blocks_x * (g.block_width + 1) + 3; }
+
+int32_t maxStations(const MapGeneratorConfig& g) {
+  const int32_t span = g.blocks_y * (g.block_height + 1) - 2;  // lane rows between edge aisles
+  return span / 2 + 1;
+}
+
+void validateMapGenerator(const MapGeneratorConfig& g) {
+  const auto in = [](int32_t v, int32_t lo, int32_t hi) { return v >= lo && v <= hi; };
+  require(in(g.blocks_x, 1, 100),
+          "map.generator.blocks_x must be in [1, 100]" + gotInt(g.blocks_x));
+  require(in(g.blocks_y, 1, 100),
+          "map.generator.blocks_y must be in [1, 100]" + gotInt(g.blocks_y));
+  require(in(g.block_width, 1, 50),
+          "map.generator.block_width must be in [1, 50]" + gotInt(g.block_width));
+  require(in(g.block_height, 1, 50),
+          "map.generator.block_height must be in [1, 50]" + gotInt(g.block_height));
+  require(in(g.parking_rows, 0, 5),
+          "map.generator.parking_rows must be in [0, 5]" + gotInt(g.parking_rows));
+  require(in(g.stations, 1, maxStations(g)), "map.generator.stations must be in [1, " +
+                                                 std::to_string(maxStations(g)) +
+                                                 "] for this layout" + gotInt(g.stations));
+}
+
 void validateConfig(const Config& c) {
   require(isValidName(c.run.name),
           "run.name must be 1 to 64 characters from [A-Za-z0-9_.-], got \"" + c.run.name + "\"");
@@ -446,7 +489,9 @@ void validateConfig(const Config& c) {
           "run.warmup_steps must be in [0, run.horizon_steps)" + gotInt(c.run.warmup_steps));
   require(!c.run.output_dir.empty(), "run.output_dir must not be empty");
 
-  require(!c.map.file.empty(), "map.file is required");
+  require(!c.map.file.empty() != c.map.generator.has_value(),
+          "map needs exactly one of map.file and map.generator");
+  if (c.map.generator) validateMapGenerator(*c.map.generator);
 
   require(
       c.fleet.size >= 1 && c.fleet.size <= kMaxFleetSize,
@@ -539,7 +584,7 @@ Config parseConfig(std::string_view yaml, const std::filesystem::path& base_dir)
   parseMap(*map, base_dir, config.map);
 
   validateConfig(config);
-  if (!std::filesystem::is_regular_file(config.map.file)) {
+  if (!config.map.generator && !std::filesystem::is_regular_file(config.map.file)) {
     throw ConfigError("config: map.file: file not found: " + config.map.file.string());
   }
   return config;
@@ -568,9 +613,20 @@ std::string dumpConfig(const Config& c) {
     << "  horizon_steps: " << c.run.horizon_steps << "\n"
     << "  warmup_steps: " << c.run.warmup_steps << "\n"
     << "  output_dir: " << quote(c.run.output_dir) << "\n"
-    << "map:\n"
-    << "  file: " << quote(c.map.file.string()) << "\n"
-    << "fleet:\n"
+    << "map:\n";
+  if (c.map.generator) {
+    const MapGeneratorConfig& g = *c.map.generator;
+    o << "  generator:\n"
+      << "    blocks_x: " << g.blocks_x << "\n"
+      << "    blocks_y: " << g.blocks_y << "\n"
+      << "    block_width: " << g.block_width << "\n"
+      << "    block_height: " << g.block_height << "\n"
+      << "    stations: " << g.stations << "\n"
+      << "    parking_rows: " << g.parking_rows << "\n";
+  } else {
+    o << "  file: " << quote(c.map.file.string()) << "\n";
+  }
+  o << "fleet:\n"
     << "  size: " << c.fleet.size << "\n"
     << "orders:\n"
     << "  arrival_rate: " << formatDouble(c.orders.arrival_rate) << "\n"

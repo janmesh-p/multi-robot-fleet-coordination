@@ -4,8 +4,10 @@ Warehouse multi-agent pickup and delivery (MAPD): task allocation, lifelong mult
 finding, traffic management, and fault recovery for up to 100 robots. Grid simulator for scale,
 Isaac Sim for physics, desk hardware in the loop.
 
-**Status:** Stage 0 (foundation) done. No results yet; every number in this README will come
-from measured runs.
+**Status:** Stage 1 (simulation core) done. The only planner so far is the uncoordinated
+baseline, so the default run gridlocks within a few hundred steps: robots meet head-on in
+one-cell aisles and stop for good. Stage 2 measures that; Stage 4 adds coordinated planners.
+Every number in this README will come from measured runs.
 
 ## Architecture
 
@@ -26,7 +28,26 @@ from measured runs.
 - Ground truth stays inside the executor. The coordinator only knows what reports tell it.
 - Invariant checks and metrics live outside the coordinator, so it never grades itself.
 - Every random stream has its own seed, so all configs compared under one seed see the same
-  orders.
+  orders. Same seed and config give the same trajectory hash.
+- Robots rest only on endpoints (stations, parking), and paths never pass through one
+  (well-formed MAPD), so a parked or servicing robot never blocks traffic.
+- One robot per station at a time; the rest wait their turn on spare parking cells.
+- Robot safety in the simulator stops a robot before contact and records why. With
+  coordinated planners every such stop counts as a violation.
+
+## Simulator
+
+Each step: new orders arrive (Poisson), robots report, the coordinator ticks, robots move one
+cell along their newest command, invariants are checked, and metrics are recorded. 1 step is
+1 simulated second.
+
+A run directory holds `config.yaml` (loading it reproduces the run), `map.txt`, `steps.csv`,
+`positions.csv`, `summary.csv`, and `violations.csv`. Replay one as a GIF:
+
+```bash
+pip install matplotlib
+python3 benchmarks/scripts/replay_gif.py benchmarks/results/default --end 300
+```
 
 ## Build and test (fleet_core)
 
@@ -69,15 +90,17 @@ a toggle under `features:` for ablations.
 fleet_core/        C++17 core, no ROS dependency
   include/fleet_core/
     common/        types, config, rng
-    world/         grid map, world model (coordinator belief)
-    tasks/         order generator, task manager
+    world/         grid map, map generator, distance oracle, world model (coordinator belief)
+    tasks/         order generator, task manager, station queues, parking
     allocation/    task allocators
     planning/      multi-agent planners
     traffic/       motion permits, deadlock handling
     faults/        fault injector (ground truth), fault manager (coordinator)
-    execution/     robot executor interface and backends
-    metrics/       run output
+    execution/     robot executor interface, grid simulator robots
+    verification/  invariant checker
+    metrics/       run statistics, run directory writer
     fleet_manager.hpp
+    simulation.hpp
   apps/            run_sim
   tests/           GoogleTest suite
 fleet_msgs/        ROS 2 messages
@@ -86,7 +109,8 @@ sim_isaac/         Isaac Sim scene and bridge (Stage 8)
 firmware/          STM32F407 + CC3100 robot client (Stage 9a)
 perception/        D435 overhead grid detector (Stage 9b)
 benchmarks/        run configs, scripts, results
-maps/              ASCII warehouse maps
+maps/              generated warehouse maps: small (15x38, up to 25 robots), large (33x75,
+                   up to 100 robots)
 ```
 
 ## Stages
@@ -94,7 +118,7 @@ maps/              ASCII warehouse maps
 | Stage | Scope | Status |
 |---|---|---|
 | 0 | Foundation: components, config, RNG, tests, CI | done |
-| 1 | Simulation core | |
+| 1 | Simulation core | done |
 | 2 | Uncoordinated baseline | |
 | 3 | Task allocation | |
 | 4 | Lifelong MAPF, PIBT | |

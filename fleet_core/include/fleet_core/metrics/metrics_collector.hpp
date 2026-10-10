@@ -3,55 +3,45 @@
 #include <cstdint>
 #include <filesystem>
 #include <fstream>
-#include <string>
+#include <vector>
 
 #include "fleet_core/common/config.hpp"
 #include "fleet_core/common/types.hpp"
+#include "fleet_core/execution/grid_executor.hpp"
+#include "fleet_core/metrics/run_stats.hpp"
+#include "fleet_core/verification/invariant_checker.hpp"
+#include "fleet_core/world/grid_map.hpp"
 
 namespace fleet_core {
 
-// One row of steps.csv. Columns grow as stages land.
-struct StepMetrics {
-  Timestep t{0};
-  int32_t tasks_completed{0};
-  int32_t conflicts{0};
-  int32_t robots_waiting{0};
-  int32_t robots_alive{0};
-  double planning_ms{0.0};
-};
-
-// One row of summary.csv, read by the benchmark scripts (Stage 7).
-struct RunSummary {
-  std::string allocator{};
-  std::string planner{};
-  int32_t fleet_size{0};
-  Timestep horizon{0};
-  double orders_per_hour{0.0};
-  double mean_completion_steps{0.0};
-  double p95_completion_steps{0.0};
-  double utilization{0.0};
-  int64_t conflicts{0};
-  int64_t congestion_steps{0};
-  double planning_p50_ms{0.0};
-  double planning_p95_ms{0.0};
-};
-
-// Writes a run's output directory: config.yaml (resolved config), steps.csv, summary.csv.
-// Owned by the runner, not by FleetManager, because it also records ground truth.
+// Writes a run's output directory:
+//   config.yaml     resolved config; loading it reproduces the run
+//   map.txt         the map the run used
+//   steps.csv       one row per step: orders, deliveries, what the fleet did, planning time
+//   positions.csv   one row per robot per step: cell, status, outcome (replay, heatmaps)
+//   summary.csv     one row: RunSummary
+//   violations.csv  invariant violations, if any
+// Owned by the runner, not by FleetManager, because it records ground truth.
 class MetricsCollector {
  public:
-  // Creates out_dir and opens steps.csv. Throws std::runtime_error if it cannot write.
+  // Creates out_dir and opens the per-step files. Throws std::runtime_error if it cannot write.
   explicit MetricsCollector(const std::filesystem::path& out_dir);
 
   void writeResolvedConfig(const Config& config);
-  void recordStep(const StepMetrics& metrics);
+  void writeMap(const GridMap& map);
+  void recordStep(const StepTruth& step, const TruthSnapshot& after, const TickStats& tick,
+                  int32_t orders_created);
   void writeSummary(const RunSummary& summary);
+  void writeViolations(const std::vector<Violation>& violations);
 
   const std::filesystem::path& outDir() const { return out_dir_; }
 
  private:
+  std::ofstream open(const char* name) const;
+
   std::filesystem::path out_dir_;
   std::ofstream steps_;
+  std::ofstream positions_;
 };
 
 }  // namespace fleet_core

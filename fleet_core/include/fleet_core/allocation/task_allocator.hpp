@@ -7,6 +7,7 @@
 #include "fleet_core/common/config.hpp"
 #include "fleet_core/common/types.hpp"
 #include "fleet_core/tasks/task_manager.hpp"
+#include "fleet_core/world/distance_oracle.hpp"
 #include "fleet_core/world/world_model.hpp"
 
 namespace fleet_core {
@@ -15,12 +16,13 @@ namespace fleet_core {
 struct AllocationContext {
   const WorldModel& world;
   const TaskManager& tasks;
+  const DistanceOracle& distances;
   std::vector<RobotId> robots{};  // available: alive and without a task, ascending id
   std::vector<TaskId> pending{};  // pending tasks, oldest first
 };
 
 // Assigns pending tasks to available robots.
-// Implementations: nearest, hungarian, cost_aware (selected by allocation.method).
+// Implementations: nearest (Stage 1), hungarian and cost_aware (Stage 3); see allocation.method.
 class TaskAllocator {
  public:
   virtual ~TaskAllocator() = default;

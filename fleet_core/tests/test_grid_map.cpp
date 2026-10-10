@@ -67,12 +67,44 @@ TEST(GridMap, HandlesWindowsLineEndings) {
   EXPECT_EQ(m.rows(), 2);
 }
 
-TEST(GridMap, LoadsShippedMap) {
-  const GridMap m = GridMap::fromFile((kRepo / "maps" / "warehouse_small.txt").string());
-  EXPECT_EQ(m.rows(), 16);
-  EXPECT_EQ(m.cols(), 30);
-  EXPECT_EQ(m.pickups().size(), 5U);
-  EXPECT_EQ(m.dropoffs().size(), 5U);
+TEST(GridMap, ParkingAndEndpoints) {
+  const GridMap m = GridMap::fromString("RR.P\n..#D\n");
+  EXPECT_EQ(m.parking().size(), 2U);
+  EXPECT_EQ(m.freeCellCount(), 7);
+  EXPECT_TRUE(m.isEndpoint({0, 0}));
+  EXPECT_TRUE(m.isEndpoint({0, 3}));
+  EXPECT_TRUE(m.isEndpoint({1, 3}));
+  EXPECT_FALSE(m.isEndpoint({0, 2}));
+  EXPECT_FALSE(m.isEndpoint({1, 2}));  // shelf
+  EXPECT_FALSE(m.isEndpoint({5, 5}));  // outside
+  EXPECT_EQ(m.kind({1, 2}), '#');
+  EXPECT_EQ(m.kind({-1, 0}), '#');
+}
+
+TEST(GridMap, IndexRoundTrips) {
+  const GridMap m = smallMap();
+  for (int32_t i = 0; i < m.cellCount(); ++i) EXPECT_EQ(m.index(m.cellAt(i)), i);
+}
+
+TEST(GridMap, ToStringRoundTrips) {
+  const std::string text = "RRRR\nP..D\n.#..\n";
+  const GridMap m = GridMap::fromString("; comment\n" + text);
+  EXPECT_EQ(m.toString(), text);
+  EXPECT_EQ(GridMap::fromString(m.toString()).toString(), text);
+}
+
+TEST(GridMap, LoadsShippedMaps) {
+  const GridMap small = GridMap::fromFile((kRepo / "maps" / "warehouse_small.txt").string());
+  EXPECT_EQ(small.rows(), 15);
+  EXPECT_EQ(small.cols(), 38);
+  EXPECT_EQ(small.pickups().size(), 4U);
+  EXPECT_EQ(small.dropoffs().size(), 4U);
+  EXPECT_EQ(small.parking().size(), 76U);
+  const GridMap large = GridMap::fromFile((kRepo / "maps" / "warehouse_large.txt").string());
+  EXPECT_EQ(large.rows(), 33);
+  EXPECT_EQ(large.cols(), 75);
+  EXPECT_EQ(large.pickups().size(), 10U);
+  EXPECT_EQ(large.parking().size(), 150U);
 }
 
 }  // namespace

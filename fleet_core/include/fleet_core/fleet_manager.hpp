@@ -2,6 +2,7 @@
 
 #include <cstdint>
 #include <memory>
+#include <optional>
 #include <vector>
 
 #include "fleet_core/allocation/task_allocator.hpp"
@@ -9,8 +10,11 @@
 #include "fleet_core/common/types.hpp"
 #include "fleet_core/faults/fault_manager.hpp"
 #include "fleet_core/planning/path_planner.hpp"
+#include "fleet_core/tasks/parking.hpp"
+#include "fleet_core/tasks/station_manager.hpp"
 #include "fleet_core/tasks/task_manager.hpp"
 #include "fleet_core/traffic/traffic_manager.hpp"
+#include "fleet_core/world/distance_oracle.hpp"
 #include "fleet_core/world/world_model.hpp"
 
 namespace fleet_core {
@@ -23,19 +27,6 @@ struct TickInput {
   std::vector<CellObservation> observations{};  // blocked or reopened cells
 };
 
-// Coordinator-side numbers for one tick, recorded by MetricsCollector.
-struct TickStats {
-  int32_t assignments{0};
-  int32_t robots_planned{0};
-  bool planner_called{false};
-  bool planner_failed{false};
-  double planning_ms{0.0};
-  int64_t expansions{0};
-  int32_t robots_declared_dead{0};
-  int32_t tasks_requeued{0};
-  int32_t deadlocks_resolved{0};
-};
-
 struct TickOutput {
   std::vector<RobotCommand> commands{};  // one per robot believed alive, every tick
   TickStats stats{};
@@ -45,18 +36,17 @@ struct TickOutput {
 //
 // Pure input and output: the same instance runs against the grid simulator, Isaac Sim, or
 // hardware. The caller owns the robots (RobotExecutor) and the measurements (MetricsCollector,
-// invariant checks), so the system under test never grades itself.
+// InvariantChecker), so the system under test never grades itself.
 //
 // tick() pipeline:
 //   1. world       accept reports and cell observations
-//   2. faults      expire heartbeat leases, requeue tasks of dead robots, reconcile false deaths
+//   2. faults      expire heartbeat leases (recovery lands in Stage 6)
 //   3. tasks       add new orders; confirm pickups and deliveries from reports
-//   4. allocation  assign pending tasks to available robots
-//   5. planning    replan robots with new goals, invalidated paths, or an expiring window
-//   6. traffic     turn committed plans into motion permits; resolve deadlocks
-//   7. output      one command per robot believed alive
-//
-// Interface only. Implementation lands in Stage 1.
+//   4. allocation  assign pending tasks to robots without one
+//   5. goals       station (on its turn), station waiting cell, or home parking
+//   6. planning    replan every robot whose goal changed; robots already there just hold
+//   7. traffic     turn committed plans into motion permits
+//   8. output      one command per robot believed alive
 class FleetManager {
  public:
   FleetManager(const Config& config, WorldModel world);
@@ -74,14 +64,37 @@ class FleetManager {
   const WorldModel& world() const { return world_; }
   const TaskManager& tasks() const { return tasks_; }
 
+  // Goal of the robot's current plan.
+  Cell goalOf(RobotId robot) const;
+
  private:
+  struct RobotPlan {
+    bool valid{false};  // false: replan next tick even if the goal is unchanged
+    Cell goal{};
+    int32_t plan_id{-1};
+    Path path{};
+  };
+
+  void confirmProgress(Timestep now);
+  void allocate(Timestep now, TickStats& stats);
+  std::vector<Cell> computeGoals();
+  void plan(Timestep now, const std::vector<Cell>& goals, TickStats& stats);
+  void commit(RobotId robot, const Cell& goal, Path path, bool valid,
+              std::vector<CommittedPlan>& committed);
+  std::vector<Path> fixedPaths(const std::vector<PlanAgent>& agents) const;
+  std::vector<RobotCommand> commands(Timestep now) const;
+
   Config config_;
   WorldModel world_;
+  DistanceOracle distances_;
+  StationManager stations_;
+  std::optional<ParkingManager> parking_;
   TaskManager tasks_{};
   std::unique_ptr<TaskAllocator> allocator_;
   std::unique_ptr<PathPlanner> planner_;
   TrafficManager traffic_;
   FaultManager faults_;
+  std::vector<RobotPlan> plans_;  // index == RobotId
 };
 
 }  // namespace fleet_core

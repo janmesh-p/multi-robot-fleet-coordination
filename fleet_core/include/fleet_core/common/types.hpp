@@ -4,6 +4,7 @@
 #include <cstdint>
 #include <functional>
 #include <optional>
+#include <string_view>
 #include <vector>
 
 namespace fleet_core {
@@ -46,6 +47,10 @@ enum class RobotStatus : uint8_t {
 };
 
 enum class TaskStatus : uint8_t { kPending, kAssigned, kPickedUp, kDone };
+
+// Names used in logs and result files.
+std::string_view toString(RobotStatus status);
+std::string_view toString(TaskStatus status);
 
 // What a robot needs to execute one order. Sent inside RobotCommand.
 struct TaskOrder {
@@ -107,6 +112,19 @@ struct RobotCommand {
   std::optional<TaskOrder> task{};  // empty when idle or parking
   std::vector<Cell> path{};         // path[0] is the robot's expected cell
   int32_t permitted_until{0};       // the robot may advance up to path[permitted_until]
+};
+
+// Coordinator-side numbers for one tick (FleetManager::tick), recorded by the metrics.
+struct TickStats {
+  int32_t assignments{0};
+  int32_t robots_planned{0};
+  bool planner_called{false};
+  bool planner_failed{false};
+  double planning_ms{0.0};  // wall time; measured, never used for decisions
+  int64_t expansions{0};
+  int32_t robots_declared_dead{0};
+  int32_t tasks_requeued{0};
+  int32_t deadlocks_resolved{0};
 };
 
 // Ground-truth faults, scripted in the config and injected into the executor backend.

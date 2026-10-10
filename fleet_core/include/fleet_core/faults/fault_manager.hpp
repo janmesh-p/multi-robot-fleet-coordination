@@ -16,13 +16,14 @@ struct FaultActions {
   std::vector<TaskId> requeued{};
 };
 
-// Coordinator-side failure handling (Stage 6): heartbeat leases, requeueing the tasks of dead
-// robots, and reconciling robots that report again after a false death.
+// Coordinator-side failure handling: heartbeat leases, requeueing the tasks of dead robots,
+// reconciling robots that report again after a false death.
 //
 // Ground-truth faults are injected into the executor backend by FaultInjector. This class only
 // sees their effects: missing, late, or surprising reports.
 //
-// Interface only. Implementation lands in Stage 6.
+// Today it only detects an expired lease and throws, because nothing can cause one yet (no
+// packet loss, no robot deaths). Stage 6 replaces the throw with recovery.
 class FaultManager {
  public:
   explicit FaultManager(const FaultsConfig& config);

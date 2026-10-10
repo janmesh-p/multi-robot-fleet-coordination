@@ -1,80 +1,53 @@
-// Headless simulation runner.
+// Headless simulation runner: one config in, one run directory out.
 //
-// Stage 0: loads and validates a run config and its map, then prints what would run.
-// The simulation loop replaces the final status line in Stage 1.
-#include <cstddef>
+//   run_sim --config <file.yaml> [--out <dir>] [--print-config]
+//
+// Exit codes: 0 run finished, 1 error, 2 bad arguments, 3 aborted on an invariant violation.
 #include <cstdio>
 #include <exception>
+#include <filesystem>
 #include <iostream>
-#include <stdexcept>
 #include <string>
 #include <string_view>
 
 #include "fleet_core/common/config.hpp"
-#include "fleet_core/world/grid_map.hpp"
+#include "fleet_core/simulation.hpp"
 
 namespace {
 
 using fleet_core::Config;
-using fleet_core::GridMap;
-
-constexpr double kDensityGuideline = 0.10;  // robots per free cell, from the project plan
 
 int usage(std::ostream& out, int code) {
-  out << "usage: run_sim --config <file.yaml> [--print-config]\n";
+  out << "usage: run_sim --config <file.yaml> [--out <dir>] [--print-config]\n"
+         "  --out           run directory (default: run.output_dir from the config)\n"
+         "  --print-config  print the resolved config before running\n";
   return code;
 }
 
-std::string percent(double fraction) {
-  char buffer[32];
-  std::snprintf(buffer, sizeof(buffer), "%.1f%%", fraction * 100.0);
+std::string fixed(double value, int decimals) {
+  char buffer[64];
+  std::snprintf(buffer, sizeof(buffer), "%.*f", decimals, value);
   return buffer;
 }
 
-std::string features(const fleet_core::FeatureToggles& f) {
-  const auto item = [](const char* name, bool on) {
-    return std::string(name) + (on ? "=on" : "=off");
-  };
-  return item("station_queues", f.station_queues) + " " + item("parking", f.parking) + " " +
-         item("distance_oracle", f.distance_oracle) + " " +
-         item("congestion_cost", f.congestion_cost) + "\n           " +
-         item("rolling_replanning", f.rolling_replanning) + " " +
-         item("dependency_graph", f.dependency_graph) + " " +
-         item("intersection_reservations", f.intersection_reservations) + "\n           " +
-         item("deadlock_recovery", f.deadlock_recovery) + " " +
-         item("starvation_guard", f.starvation_guard);
-}
-
-// Checks that need the map. Config-only checks already ran inside loadConfig.
-void checkScenario(const Config& config, const GridMap& map) {
-  if (map.pickups().empty() || map.dropoffs().empty()) {
-    throw std::runtime_error("map needs at least one pickup 'P' and one dropoff 'D' station");
-  }
-  if (config.fleet.size > map.freeCellCount()) {
-    throw std::runtime_error("fleet.size " + std::to_string(config.fleet.size) +
-                             " exceeds the map's " + std::to_string(map.freeCellCount()) +
-                             " free cells");
-  }
-  for (size_t i = 0; i < config.faults.events.size(); ++i) {
-    for (const fleet_core::Cell& cell : config.faults.events[i].cells) {
-      if (!map.isStaticFree(cell)) {
-        throw std::runtime_error("faults.events[" + std::to_string(i) + "]: cell [" +
-                                 std::to_string(cell.row) + ", " + std::to_string(cell.col) +
-                                 "] is outside the map or not a free cell");
-      }
-    }
-  }
+std::string hex16(uint64_t value) {
+  char buffer[17];
+  std::snprintf(buffer, sizeof(buffer), "%016llx", static_cast<unsigned long long>(value));
+  return buffer;
 }
 
 }  // namespace
 
 int main(int argc, char** argv) {
   std::string config_path;
+  std::string out_arg;
   bool print_config = false;
   for (int i = 1; i < argc; ++i) {
     const std::string_view arg(argv[i]);
     if (arg == "--config" && i + 1 < argc) {
       config_path = argv[++i];
+    } else if (arg == "--out" && i + 1 < argc) {
+      out_arg = argv[++i];
     } else if (arg == "--print-config") {
       print_config = true;
     } else if (arg == "--help" || arg == "-h") {
@@ -87,39 +60,47 @@ int main(int argc, char** argv) {
 
   try {
     const Config config = fleet_core::loadConfig(config_path);
-    const GridMap map = GridMap::fromFile(config.map.file.string());
-    checkScenario(config, map);
+    if (print_config) std::cout << fleet_core::dumpConfig(config) << "\n";
+    const fleet_core::Simulation sim(config);
+    const std::filesystem::path out_dir = out_arg.empty() ? config.run.output_dir : out_arg;
 
-    const double density =
-        static_cast<double>(config.fleet.size) / static_cast<double>(map.freeCellCount());
-    std::cout << "config     " << config_path << " (run \"" << config.run.name << "\", seed "
-              << config.run.seed << ")\n"
-              << "map        " << config.map.file.string() << "\n"
-              << "           " << map.rows() << "x" << map.cols() << ", " << map.freeCellCount()
+    const fleet_core::GridMap& map = sim.map();
+    std::cout << "run        " << config.run.name << " (seed " << config.run.seed << ")\n"
+              << "map        " << map.rows() << "x" << map.cols() << ", " << map.freeCellCount()
               << " free cells, " << map.pickups().size() << " pickup and " << map.dropoffs().size()
-              << " dropoff stations\n"
-              << "fleet      " << config.fleet.size << " robots, " << percent(density)
-              << " of free cells\n"
-              << "orders     " << config.orders.arrival_rate << " per step, service "
-              << config.orders.service_steps << " steps\n"
-              << "allocation " << fleet_core::toString(config.allocation.method) << "\n"
-              << "planning   " << fleet_core::toString(config.planning.method) << ", window "
-              << config.planning.window << ", replan every " << config.planning.replan_period
-              << "\n"
-              << "horizon    " << config.run.horizon_steps << " steps, warmup "
-              << config.run.warmup_steps << "\n"
-              << "faults     " << config.faults.events.size() << " scripted events, packet loss "
-              << percent(config.faults.packet_loss) << "\n"
-              << "features   " << features(config.features) << "\n";
-    if (density > kDensityGuideline) {
-      std::cout << "warning    fleet density above the " << percent(kDensityGuideline)
-                << " guideline\n";
+              << " dropoff stations, " << map.parking().size() << " parking\n"
+              << "fleet      " << config.fleet.size << " robots, "
+              << fleet_core::toString(config.allocation.method) << " allocation, "
+              << fleet_core::toString(config.planning.method) << " planning\n"
+              << "orders     " << config.orders.arrival_rate << " per step for "
+              << config.run.horizon_steps << " steps (warmup " << config.run.warmup_steps << ")\n";
+    for (const std::string& note : sim.notes()) std::cout << "note       " << note << "\n";
+
+    const fleet_core::RunResult result = sim.run(out_dir);
+    const fleet_core::RunSummary& s = result.summary;
+    std::cout << "\nsteps      " << s.steps_run << (s.aborted ? " (aborted)" : "") << "\n"
+              << "orders     " << s.orders_delivered << " delivered of " << s.orders_created
+              << " created\n"
+              << "throughput " << fixed(s.orders_per_hour, 1) << " orders/hour (steady state)\n"
+              << "completion " << fixed(s.mean_completion_steps, 1) << " steps mean, "
+              << fixed(s.p95_completion_steps, 1) << " p95 (" << s.completion_samples
+              << " orders)\n"
+              << "utilization " << fixed(s.utilization * 100.0, 1) << "%\n"
+              << "conflicts  " << s.conflicts << " robot-steps stopped by robot safety\n"
+              << "planning   " << fixed(s.planning_p50_ms, 3) << " ms p50, "
+              << fixed(s.planning_p95_ms, 3) << " ms p95 over " << s.planning_calls << " calls\n"
+              << "violations " << s.violations << "\n"
+              << "hash       " << hex16(s.log_hash) << "\n"
+              << "wall       " << fixed(s.wall_seconds, 2) << " s\n"
+              << "output     " << out_dir.string() << "\n";
+    for (size_t i = 0; i < result.violations.size() && i < 5; ++i) {
+      const fleet_core::Violation& v = result.violations[i];
+      std::cout << "violation  t=" << v.t << " " << fleet_core::toString(v.kind) << ": " << v.detail
+                << "\n";
     }
-    if (print_config) std::cout << "\n" << fleet_core::dumpConfig(config) << "\n";
-    std::cout << "status     config valid; simulation loop not implemented yet (Stage 1)\n";
+    return s.aborted ? 3 : 0;
   } catch (const std::exception& e) {
     std::cerr << "error: " << e.what() << "\n";
     return 1;
   }
-  return 0;
 }

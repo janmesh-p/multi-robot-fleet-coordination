@@ -37,12 +37,28 @@ endif()
 add_library(fleet_core
   src/common/config.cpp
   src/common/rng.cpp
+  src/common/types.cpp
   src/world/grid_map.cpp
+  src/world/map_generator.cpp
+  src/world/distance_oracle.cpp
+  src/world/world_model.cpp
   src/tasks/order_generator.cpp
+  src/tasks/task_manager.cpp
+  src/tasks/station_manager.cpp
+  src/tasks/parking.cpp
   src/allocation/task_allocator.cpp
+  src/allocation/nearest_allocator.cpp
   src/planning/path_planner.cpp
+  src/planning/independent_astar.cpp
+  src/traffic/traffic_manager.cpp
   src/faults/fault_injector.cpp
+  src/faults/fault_manager.cpp
+  src/execution/grid_executor.cpp
+  src/verification/invariant_checker.cpp
+  src/metrics/run_stats.cpp
   src/metrics/metrics_collector.cpp
+  src/fleet_manager.cpp
+  src/simulation.cpp
 )
 add_library(fleet_core::fleet_core ALIAS fleet_core)
 target_include_directories(fleet_core PUBLIC "${CMAKE_CURRENT_SOURCE_DIR}/include")

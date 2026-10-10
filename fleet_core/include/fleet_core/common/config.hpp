@@ -2,6 +2,7 @@
 
 #include <cstdint>
 #include <filesystem>
+#include <optional>
 #include <stdexcept>
 #include <string>
 #include <string_view>
@@ -38,8 +39,28 @@ struct RunConfig {
   std::string output_dir{"benchmarks/results/default"};  // relative to the working directory
 };
 
+// Parametric warehouse layout, built by world/map_generator.hpp.
+struct MapGeneratorConfig {
+  int32_t blocks_x{5};      // shelf blocks per row
+  int32_t blocks_y{4};      // rows of shelf blocks
+  int32_t block_width{6};   // cells
+  int32_t block_height{2};  // cells
+  int32_t stations{4};      // pickups on the left lane, as many dropoffs on the right lane
+  int32_t parking_rows{1};  // parking rows along the top edge, and as many along the bottom
+};
+
+// Size of the generated map and the most stations its lanes can hold (two rows apart).
+int32_t generatedRows(const MapGeneratorConfig& layout);
+int32_t generatedCols(const MapGeneratorConfig& layout);
+int32_t maxStations(const MapGeneratorConfig& layout);
+
+// Range checks for a layout. Throws ConfigError. validateConfig calls it.
+void validateMapGenerator(const MapGeneratorConfig& layout);
+
+// Exactly one of file and generator is set.
 struct MapConfig {
-  std::filesystem::path file{};  // absolute after loading
+  std::filesystem::path file{};                   // absolute after loading
+  std::optional<MapGeneratorConfig> generator{};  // used instead of a file
 };
 
 struct FleetConfig {
@@ -122,7 +143,7 @@ class ConfigError : public std::runtime_error {
 // Reads a YAML run config. Unknown or duplicate keys, wrong types, and out-of-range values
 // throw ConfigError naming the key and line, so a typo never silently falls back to a default.
 // Missing keys keep the defaults above. map.file resolves relative to the config file and
-// must exist.
+// must exist; map.generator describes a generated map instead.
 Config loadConfig(const std::filesystem::path& file);
 
 // Same, from text. A relative map.file resolves against base_dir.

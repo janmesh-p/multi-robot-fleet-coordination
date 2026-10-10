@@ -38,8 +38,8 @@ jobs:
       - name: Test
         run: ctest --test-dir build --output-on-failure
 
-      - name: Validate shipped config
-        run: ./build/run_sim --config benchmarks/configs/default.yaml
+      - name: Simulate the shipped config
+        run: ./build/run_sim --config benchmarks/configs/default.yaml --out build/default_run
 
   format:
     runs-on: ubuntu-22.04

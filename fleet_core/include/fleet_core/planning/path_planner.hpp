@@ -7,6 +7,7 @@
 
 #include "fleet_core/common/config.hpp"
 #include "fleet_core/common/types.hpp"
+#include "fleet_core/world/distance_oracle.hpp"
 #include "fleet_core/world/world_model.hpp"
 
 namespace fleet_core {
@@ -22,6 +23,7 @@ struct PlanAgent {
 // Inputs for one planning call.
 struct PlanningRequest {
   const WorldModel& world;
+  const DistanceOracle& distances;   // heuristic
   std::vector<PlanAgent> agents{};   // robots to (re)plan, ascending id
   std::vector<Path> fixed{};         // committed paths of robots not replanned: moving obstacles
   Timestep start{0};                 // step at which every new path starts
@@ -31,8 +33,8 @@ struct PlanningRequest {
 };
 
 // Multi-agent path planner.
-// Implementations: independent_astar, prioritized, windowed_coop_astar, cbs, ecbs, pibt
-// (selected by planning.method).
+// Implementations: independent_astar (Stage 1); prioritized, windowed_coop_astar, cbs, ecbs,
+// pibt (Stage 4); see planning.method.
 class PathPlanner {
  public:
   virtual ~PathPlanner() = default;
