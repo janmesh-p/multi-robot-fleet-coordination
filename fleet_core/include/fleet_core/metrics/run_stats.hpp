@@ -40,6 +40,17 @@ struct RunSummary {
 
   int64_t violations{0};
   bool aborted{false};
+
+  // Progress, from ProgressMonitor; whole run. -1: never happened.
+  Timestep first_deadlock_step{-1};  // formation step of the first deadlock
+  int64_t deadlocks{0};              // wait-for cycles that lasted ProgressMonitor::kConfirmSteps
+  int32_t deadlocked_robots{0};      // on a deadlock at the end
+  int32_t blocked_behind{0};         // waiting on a chain into a deadlock at the end
+  int32_t stalled_robots{0};         // no progress for ProgressMonitor::kStallSteps at the end
+  int64_t stalled_robot_steps{0};
+  Timestep frozen_at{-1};  // from here to the end no robot made progress, work left
+  Timestep last_delivery_step{-1};
+
   uint64_t log_hash{0};  // fingerprint of the trajectory; same seed and config, same hash
   double wall_seconds{0.0};
 };

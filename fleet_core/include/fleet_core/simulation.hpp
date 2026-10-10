@@ -10,6 +10,7 @@
 #include "fleet_core/common/types.hpp"
 #include "fleet_core/metrics/run_stats.hpp"
 #include "fleet_core/verification/invariant_checker.hpp"
+#include "fleet_core/verification/progress_monitor.hpp"
 #include "fleet_core/world/grid_map.hpp"
 
 namespace fleet_core {
@@ -17,11 +18,12 @@ namespace fleet_core {
 struct RunResult {
   RunSummary summary{};
   std::vector<Violation> violations{};  // the first kMaxStoredViolations
+  std::vector<Deadlock> deadlocks{};
 };
 
 // One grid-simulator run, wired in the order a real deployment sees it each step:
 //   new orders -> robot reports -> FleetManager::tick -> commands -> robots move
-//   -> invariant checks -> metrics
+//   -> invariant checks -> progress monitor -> metrics
 // The coordinator only sees reports; ground truth stays in the executor.
 class Simulation {
  public:
@@ -34,8 +36,8 @@ class Simulation {
 
   // Runs to the horizon, or to the first violation when verification.on_violation is abort.
   // Each call starts from the initial state, so two calls give the same result.
-  // Writes config.yaml, map.txt, steps.csv, positions.csv, summary.csv, violations.csv to
-  // out_dir when given.
+  // Writes config.yaml, map.txt, steps.csv, positions.csv, summary.csv, violations.csv,
+  // deadlocks.csv to out_dir when given.
   RunResult run(const std::optional<std::filesystem::path>& out_dir = std::nullopt) const;
 
   const Config& config() const { return config_; }

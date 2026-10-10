@@ -36,6 +36,14 @@ std::string hex16(uint64_t value) {
   return buffer;
 }
 
+std::string deadlockLine(const fleet_core::RunSummary& s) {
+  if (s.deadlocks == 0) return "none";
+  return std::to_string(s.deadlocks) + ", the first formed at step " +
+         std::to_string(s.first_deadlock_step) + "; at the end " +
+         std::to_string(s.deadlocked_robots) + " robots on a deadlock, " +
+         std::to_string(s.blocked_behind) + " blocked behind";
+}
+
 }  // namespace
 
 int main(int argc, char** argv) {
@@ -90,6 +98,18 @@ int main(int argc, char** argv) {
               << "planning   " << fixed(s.planning_p50_ms, 3) << " ms p50, "
               << fixed(s.planning_p95_ms, 3) << " ms p95 over " << s.planning_calls << " calls\n"
               << "violations " << s.violations << "\n"
+              << "deadlocks  " << deadlockLine(s) << "\n"
+              << "stalls     " << s.stalled_robots << " robots stalled at the end, "
+              << s.stalled_robot_steps << " robot-steps in total\n"
+              << "frozen     "
+              << (s.frozen_at < 0 ? std::string("no")
+                                  : "from step " + std::to_string(s.frozen_at) + " to the end (" +
+                                        std::to_string(s.steps_run - s.frozen_at) + " steps)")
+              << "\n"
+              << "delivered  last at step "
+              << (s.last_delivery_step < 0 ? std::string("none")
+                                           : std::to_string(s.last_delivery_step))
+              << "\n"
               << "hash       " << hex16(s.log_hash) << "\n"
               << "wall       " << fixed(s.wall_seconds, 2) << " s\n"
               << "output     " << out_dir.string() << "\n";

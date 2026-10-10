@@ -116,6 +116,7 @@ RunResult Simulation::run(const std::optional<std::filesystem::path>& out_dir) c
   FleetManager fleet(config_, WorldModel(map_, spawn_));
   OrderGenerator orders(map_, config_.orders.arrival_rate, deriveSeed(seed, rng_stream::kOrders));
   InvariantChecker checker(config_.planning.method != PlanningMethod::kIndependentAStar);
+  ProgressMonitor progress(config_.fleet.size);
   RunStats stats(config_.fleet.size, config_.run.warmup_steps);
   std::optional<MetricsCollector> writer;
   if (out_dir) {
@@ -144,10 +145,11 @@ RunResult Simulation::run(const std::optional<std::filesystem::path>& out_dir) c
     const TruthSnapshot truth = robots.snapshot();
     std::vector<Violation> found =
         checker.check(robots.map(), robots.lastStep(), truth, fleet.tasks(), issued);
+    const ProgressStep& seen = progress.observe(robots.lastStep(), truth);
     stats.recordStep(robots.lastStep(), truth, output.stats);
     if (writer) {
       writer->recordStep(robots.lastStep(), truth, output.stats,
-                         static_cast<int32_t>(input.new_orders.size()));
+                         static_cast<int32_t>(input.new_orders.size()), seen);
     }
     steps_run = t + 1;
     if (!found.empty()) {
@@ -166,9 +168,20 @@ RunResult Simulation::run(const std::optional<std::filesystem::path>& out_dir) c
   const double wall =
       std::chrono::duration<double>(std::chrono::steady_clock::now() - wall_start).count();
   result.summary = stats.summarize(config_, steps_run, wall, violation_count, aborted);
+  const ProgressSummary p = progress.summarize(steps_run);
+  result.summary.first_deadlock_step = p.first_deadlock_step;
+  result.summary.deadlocks = p.deadlocks;
+  result.summary.deadlocked_robots = p.deadlocked_robots;
+  result.summary.blocked_behind = p.blocked_behind;
+  result.summary.stalled_robots = p.stalled_robots;
+  result.summary.stalled_robot_steps = p.stalled_robot_steps;
+  result.summary.frozen_at = p.frozen_at;
+  result.summary.last_delivery_step = p.last_delivery_step;
+  result.deadlocks = progress.deadlocks();
   if (writer) {
     writer->writeSummary(result.summary);
     writer->writeViolations(result.violations);
+    writer->writeDeadlocks(result.deadlocks);
   }
   return result;
 }

@@ -9,7 +9,7 @@ else()
 endif()
 
 option(FLEET_CORE_BUILD_TESTS "Build fleet_core unit tests" ${FLEET_CORE_TOP_LEVEL})
-option(FLEET_CORE_BUILD_APPS "Build fleet_core apps (run_sim)" ${FLEET_CORE_TOP_LEVEL})
+option(FLEET_CORE_BUILD_APPS "Build fleet_core apps (run_sim, run_sweep)" ${FLEET_CORE_TOP_LEVEL})
 option(FLEET_WERROR "Treat compiler warnings as errors" ON)
 option(FLEET_SANITIZE "Build with AddressSanitizer and UndefinedBehaviorSanitizer" OFF)
 
@@ -55,10 +55,12 @@ add_library(fleet_core
   src/faults/fault_manager.cpp
   src/execution/grid_executor.cpp
   src/verification/invariant_checker.cpp
+  src/verification/progress_monitor.cpp
   src/metrics/run_stats.cpp
   src/metrics/metrics_collector.cpp
   src/fleet_manager.cpp
   src/simulation.cpp
+  src/sweep.cpp
 )
 add_library(fleet_core::fleet_core ALIAS fleet_core)
 target_include_directories(fleet_core PUBLIC "${CMAKE_CURRENT_SOURCE_DIR}/include")
@@ -68,10 +70,12 @@ set_target_properties(fleet_core PROPERTIES POSITION_INDEPENDENT_CODE ON)
 fleet_configure_target(fleet_core)
 
 if(FLEET_CORE_BUILD_APPS)
-  add_executable(run_sim apps/run_sim.cpp)
-  target_link_libraries(run_sim PRIVATE fleet_core)
-  fleet_configure_target(run_sim)
-  install(TARGETS run_sim RUNTIME DESTINATION bin)
+  foreach(app run_sim run_sweep)
+    add_executable(${app} apps/${app}.cpp)
+    target_link_libraries(${app} PRIVATE fleet_core)
+    fleet_configure_target(${app})
+    install(TARGETS ${app} RUNTIME DESTINATION bin)
+  endforeach()
 endif()
 
 if(FLEET_CORE_BUILD_TESTS)

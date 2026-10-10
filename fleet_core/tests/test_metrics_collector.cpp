@@ -2,6 +2,7 @@
 
 #include <filesystem>
 #include <fstream>
+#include <optional>
 #include <sstream>
 #include <string>
 #include <vector>
@@ -45,6 +46,17 @@ StepTruth sampleStep() {
   return step;
 }
 
+// Robot 1 waits for robot 0, which stands in the cell it wanted.
+ProgressStep sampleProgress() {
+  ProgressStep p;
+  p.waits_for = {-1, 0};
+  p.on_cycle = {0, 0};
+  p.behind = {0, 0};
+  p.stalled = {0, 1};
+  p.stalled_count = 1;
+  return p;
+}
+
 TruthSnapshot sampleTruth() {
   TruthSnapshot s;
   s.cells = {{1, 2}, {2, 2}};
@@ -66,7 +78,7 @@ TEST_F(MetricsCollectorTest, WritesRunDirectory) {
     TickStats tick;
     tick.assignments = 1;
     tick.planning_ms = 1.5;
-    metrics.recordStep(sampleStep(), sampleTruth(), tick, 2);
+    metrics.recordStep(sampleStep(), sampleTruth(), tick, 2, sampleProgress());
     RunSummary summary;
     summary.run_name = "metrics_test";
     summary.allocator = "nearest";
@@ -74,6 +86,8 @@ TEST_F(MetricsCollectorTest, WritesRunDirectory) {
     summary.log_hash = 0xABCULL;
     metrics.writeSummary(summary);
     metrics.writeViolations({Violation{3, ViolationKind::kSwap, "robot 0, robot 1"}});
+    metrics.writeDeadlocks(
+        {Deadlock{5, {1, 4}, std::optional<Timestep>(9)}, Deadlock{12, {2, 3}, {}}});
   }
   const std::filesystem::path run = dir_ / "run";
 
@@ -84,18 +98,38 @@ TEST_F(MetricsCollectorTest, WritesRunDirectory) {
 
   EXPECT_EQ(readFile(run / "steps.csv"),
             "t,orders_created,deliveries,moved,planned_wait,hold,service,idle,delayed,blocked,"
-            "assignments,robots_planned,planning_ms,expansions\n"
-            "3,2,1,1,0,0,0,0,0,1,1,0,1.5,0\n");
+            "assignments,robots_planned,planning_ms,expansions,on_cycle,behind,stalled\n"
+            "3,2,1,1,0,0,0,0,0,1,1,0,1.5,0,0,0,1\n");
   EXPECT_EQ(readFile(run / "positions.csv"),
-            "t,robot,row,col,status,outcome\n"
-            "3,0,1,2,idle,moved\n"
-            "3,1,2,2,to_pickup,blocked_vertex\n");
+            "t,robot,row,col,status,outcome,waits_for,on_cycle\n"
+            "3,0,1,2,idle,moved,-1,0\n"
+            "3,1,2,2,to_pickup,blocked_vertex,0,0\n");
 
   const std::string summary = readFile(run / "summary.csv");
   EXPECT_EQ(summary.rfind("run,allocator,planner,", 0), 0U);
   EXPECT_NE(summary.find("\nmetrics_test,nearest,independent_astar,"), std::string::npos);
   EXPECT_NE(summary.find(",0000000000000abc,"), std::string::npos);
   EXPECT_EQ(readFile(run / "violations.csv"), "t,kind,detail\n3,swap,\"robot 0, robot 1\"\n");
+  EXPECT_EQ(readFile(run / "deadlocks.csv"), "formed,broken,robots\n5,9,1 4\n12,,2 3\n");
+}
+
+TEST(SummaryCsv, HeaderAndRowHaveTheSameColumns) {
+  RunSummary s;
+  s.run_name = "a,b";  // quoted, so it stays one column
+  s.first_deadlock_step = 135;
+  s.frozen_at = 218;
+  const auto columns = [](const std::string& line) {
+    int count = 1;
+    bool quoted = false;
+    for (const char c : line) {
+      if (c == '"') quoted = !quoted;
+      if (c == ',' && !quoted) ++count;
+    }
+    return count;
+  };
+  EXPECT_EQ(columns(summaryCsvHeader()), columns(summaryCsvRow(s)));
+  EXPECT_NE(summaryCsvRow(s).find(",135,"), std::string::npos);
+  EXPECT_EQ(summaryCsvRow(s).rfind("\"a,b\",", 0), 0U);
 }
 
 TEST(RunStats, SteadyStateExcludesWarmup) {

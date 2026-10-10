@@ -6,6 +6,7 @@
 
 Robots are numbered dots: blue heading to a pickup, orange carrying an order, aqua idle.
 A square is a robot servicing a station. A black x marks a robot stopped by another robot.
+A thick ring marks a robot on a wait-for cycle (run directories from Stage 2 on).
 --png STEP writes that single step as a PNG instead of a GIF.
 
 Needs matplotlib (pip install matplotlib).
@@ -61,7 +62,8 @@ def load_positions(path):
     with open(path) as f:
         for row in csv.DictReader(f):
             frames.setdefault(int(row["t"]), []).append(
-                (int(row["robot"]), int(row["row"]), int(row["col"]), row["status"], row["outcome"])
+                (int(row["robot"]), int(row["row"]), int(row["col"]), row["status"], row["outcome"],
+                 row.get("on_cycle", "0") == "1")
             )
     return frames
 
@@ -116,6 +118,8 @@ def main():
     dots = ax.scatter([], [], s=marker_size, marker="o", edgecolors=INK, linewidths=0.6, zorder=3)
     squares = ax.scatter([], [], s=marker_size, marker="s", edgecolors=INK, linewidths=0.6, zorder=3)
     stops = ax.scatter([], [], s=28, marker="x", c=INK, linewidths=1.4, zorder=5)
+    rings = ax.scatter([], [], s=(cell_px * 1.25) ** 2, marker="o", facecolors="none", edgecolors=INK,
+                       linewidths=2.0, zorder=2)
     fleet = max(robot for robot, *_ in frames[steps[0]]) + 1
     labels = [ax.text(0, 0, str(i), ha="center", va="center", fontsize=6, color=INK, zorder=4)
               for i in range(fleet)]
@@ -127,14 +131,16 @@ def main():
         Line2D([], [], marker="o", ls="", markerfacecolor=IDLE, markeredgecolor=INK, label="idle"),
         Line2D([], [], marker="s", ls="", markerfacecolor="none", markeredgecolor=INK, label="at station"),
         Line2D([], [], marker="x", ls="", color=INK, label="stopped by robot"),
+        Line2D([], [], marker="o", ls="", markersize=9, markerfacecolor="none", markeredgecolor=INK,
+               markeredgewidth=2.0, label="on a wait-for cycle"),
     ]
-    fig.legend(handles=legend, loc="lower center", ncol=5, frameon=False, fontsize=7,
+    fig.legend(handles=legend, loc="lower center", ncol=6, frameon=False, fontsize=7,
                labelcolor=INK, handletextpad=0.3, columnspacing=1.2)
 
     def draw(t):
         robots = sorted(frames[t])
-        circle_xy, circle_c, square_xy, square_c, stop_xy = [], [], [], [], []
-        for robot, r, c, status, outcome in robots:
+        circle_xy, circle_c, square_xy, square_c, stop_xy, ring_xy = [], [], [], [], [], []
+        for robot, r, c, status, outcome, on_cycle in robots:
             color = STATUS_COLOR.get(status, MUTED)
             if status in SERVICING:
                 square_xy.append((c, r))
@@ -144,14 +150,18 @@ def main():
                 circle_c.append(color)
             if outcome in BLOCKED:
                 stop_xy.append((c + 0.38, r - 0.38))
+            if on_cycle:
+                ring_xy.append((c, r))
             labels[robot].set_position((c, r))
         dots.set_offsets(np.array(circle_xy).reshape(-1, 2))
         dots.set_facecolor(circle_c)
         squares.set_offsets(np.array(square_xy).reshape(-1, 2))
         squares.set_facecolor(square_c)
         stops.set_offsets(np.array(stop_xy).reshape(-1, 2))
-        title.set_text(f"step {t}   delivered {delivered.get(t, 0)}   robots {len(robots)}")
-        return [dots, squares, stops, title, *labels]
+        rings.set_offsets(np.array(ring_xy).reshape(-1, 2))
+        title.set_text(f"step {t}   delivered {delivered.get(t, 0)}   robots {len(robots)}"
+                       f"   on a cycle {len(ring_xy)}")
+        return [dots, squares, stops, rings, title, *labels]
 
     if args.png is not None:
         out = args.out or args.run_dir / f"replay_{args.png}.png"

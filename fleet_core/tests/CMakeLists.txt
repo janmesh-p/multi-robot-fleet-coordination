@@ -13,9 +13,11 @@ add_executable(fleet_core_tests
   test_allocation_planning.cpp
   test_grid_executor.cpp
   test_invariant_checker.cpp
+  test_progress_monitor.cpp
   test_fault_injector.cpp
   test_metrics_collector.cpp
   test_simulation.cpp
+  test_sweep.cpp
 )
 target_link_libraries(fleet_core_tests PRIVATE fleet_core ${FLEET_YAML_TARGET} GTest::gtest_main)
 target_compile_definitions(fleet_core_tests PRIVATE FLEET_REPO_ROOT="${PROJECT_SOURCE_DIR}/..")

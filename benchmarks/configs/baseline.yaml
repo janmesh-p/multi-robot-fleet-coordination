@@ -1,0 +1,74 @@
+# The uncoordinated baseline (Stage 2): nearest allocation, independent A*, and only the
+# Stage 1 features. Later stages must not change what this config runs:
+# benchmarks/reference/baseline_sweep.csv records its results and CI checks them every push.
+# Toggles for features that do not exist yet are off, so implementing them cannot move it.
+#
+# Rules:
+#   - Unknown or duplicate keys are errors, so a typo never silently falls back to a default.
+#   - Missing keys take the built-in defaults, which default.yaml lists.
+#   - map.file resolves relative to this file. run.output_dir is relative to the working directory.
+#   - 1 step = 1 simulated second. Robots move one cell per step.
+
+run:
+  name: baseline
+  seed: 1                     # master seed; each random stream derives its own seed from it
+  horizon_steps: 3600         # one simulated hour
+  warmup_steps: 600           # excluded from steady-state metrics
+  output_dir: benchmarks/results/baseline
+
+map:
+  file: ../../maps/warehouse_small.txt
+  # Or generate a layout instead of loading a file (set one, not both):
+  # generator: {blocks_x: 5, blocks_y: 4, block_width: 6, block_height: 2, stations: 4, parking_rows: 1}
+
+fleet:
+  size: 10
+
+orders:
+  arrival_rate: 0.1           # Poisson mean orders per step
+  service_steps: 2            # dwell at each pickup and dropoff station
+
+allocation:
+  method: nearest             # nearest | hungarian | cost_aware
+  congestion_weight: 1.0      # cost_aware only
+
+planning:
+  method: independent_astar   # independent_astar | prioritized | windowed_coop_astar | cbs | ecbs | pibt
+  window: 20                  # windowed planners: conflict-free steps per plan
+  replan_period: 5            # rolling horizon: replan every k steps (k <= window)
+  expansion_budget: 200000    # node expansions per planning call; deterministic time limit
+  ecbs_suboptimality: 1.2     # ecbs only; cost bound w >= 1
+
+execution:
+  delay_probability: 0.0      # chance that a robot misses a step
+
+faults:
+  heartbeat_timeout_steps: 5  # silent this long: robot declared dead
+  rescue_steps: 120           # dead robot removed from the floor after this long
+  packet_loss: 0.0            # drop probability per report and per command
+  events: []
+  # Examples:
+  #   - {at: 500, type: robot_death, robot: 0}
+  #   - {at: 800, type: block_cells, cells: [[5, 9], [5, 10]]}
+  #   - {at: 1200, type: unblock_cells, cells: [[5, 9], [5, 10]]}
+  #   - {at: 900, type: comm_outage, robot: 3, duration: 20}
+
+features:                     # one switch per feature, for ablations
+  station_queues: true
+  parking: true
+  distance_oracle: true       # false: Manhattan distance
+  congestion_cost: false      # cost_aware allocation penalizes congested routes
+  rolling_replanning: false
+  dependency_graph: false     # execution dependency graph (delay tolerance)
+  intersection_reservations: false
+  deadlock_recovery: false
+  starvation_guard: false
+
+verification:
+  on_violation: abort         # abort | record
+
+objective:                    # J = sum of weight x term, terms normalized by the baseline (Stage 7)
+  w_completion: 1.0
+  w_distance: 1.0
+  w_congestion: 1.0
+  w_replanning: 1.0

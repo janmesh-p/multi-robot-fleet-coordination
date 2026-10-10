@@ -150,6 +150,29 @@ TEST(Simulation, DefaultScenarioHasNoViolations) {
   EXPECT_GT(result.summary.orders_delivered, 0);
 }
 
+// The shipped config, replayed: the numbers the README and the explainer quote.
+//   Steps 113 to 128: R1 and R6 head-on in column 1. It breaks at 129 only because R6's station
+//   turn comes up and gives it a new path.
+//   Step 135: R8 is handed its station turn and turns back into R9. That cycle never breaks;
+//   R0 to R5 queue behind it, and after step 217 no robot moves again.
+TEST(Simulation, DefaultRunDeadlocksAndFreezes) {
+  const RunResult result = Simulation(smallConfig()).run();
+  const RunSummary& s = result.summary;
+  EXPECT_EQ(s.first_deadlock_step, 113);
+  EXPECT_EQ(s.deadlocks, 2);
+  EXPECT_EQ(s.deadlocked_robots, 2);
+  EXPECT_EQ(s.blocked_behind, 6);
+  EXPECT_EQ(s.frozen_at, 218);
+  EXPECT_EQ(s.last_delivery_step, 168);
+  EXPECT_EQ(s.stalled_robots, 10);
+  ASSERT_EQ(result.deadlocks.size(), 2U);
+  EXPECT_EQ(result.deadlocks[0].robots, (std::vector<RobotId>{1, 6}));
+  EXPECT_EQ(result.deadlocks[0].broken, std::optional<Timestep>(129));
+  EXPECT_EQ(result.deadlocks[1].formed, 135);
+  EXPECT_EQ(result.deadlocks[1].robots, (std::vector<RobotId>{8, 9}));
+  EXPECT_FALSE(result.deadlocks[1].broken.has_value());
+}
+
 TEST(Simulation, RunsAGeneratedMap) {
   Config c = smallConfig();
   c.map.file.clear();
@@ -207,8 +230,8 @@ TEST(Simulation, WritesTheRunDirectory) {
       std::filesystem::temp_directory_path() / ("fleet_core_sim_" + std::to_string(::getpid()));
   std::filesystem::remove_all(dir);
   const RunResult result = Simulation(smallConfig()).run(dir);
-  for (const char* name :
-       {"config.yaml", "map.txt", "steps.csv", "positions.csv", "summary.csv", "violations.csv"}) {
+  for (const char* name : {"config.yaml", "map.txt", "steps.csv", "positions.csv", "summary.csv",
+                           "violations.csv", "deadlocks.csv"}) {
     EXPECT_TRUE(std::filesystem::is_regular_file(dir / name)) << name;
   }
   std::ifstream summary(dir / "summary.csv");

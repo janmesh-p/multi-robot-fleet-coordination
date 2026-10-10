@@ -41,6 +41,11 @@ jobs:
       - name: Simulate the shipped config
         run: ./build/run_sim --config benchmarks/configs/default.yaml --out build/default_run
 
+      - name: Baseline sweep matches the reference
+        run: >
+          ./build/run_sweep --config benchmarks/configs/baseline.yaml --out build/baseline
+          --check benchmarks/reference/baseline_sweep.csv
+
   format:
     runs-on: ubuntu-22.04
     steps:
