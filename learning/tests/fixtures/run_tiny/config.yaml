@@ -1,0 +1,46 @@
+run:
+  name: "run_tiny"
+  seed: 3000
+  horizon_steps: 400
+  warmup_steps: 100
+  output_dir: "run_tiny"
+map:
+  file: "maps/warehouse_small.txt"
+fleet:
+  size: 5
+orders:
+  arrival_rate: 0.1
+  service_steps: 2
+allocation:
+  method: hungarian
+  congestion_weight: 1.0
+planning:
+  method: independent_astar
+  window: 20
+  replan_period: 5
+  expansion_budget: 200000
+  ecbs_suboptimality: 1.2
+execution:
+  delay_probability: 0.0
+faults:
+  heartbeat_timeout_steps: 5
+  rescue_steps: 120
+  packet_loss: 0.0
+  events: []
+features:
+  station_queues: true
+  parking: true
+  distance_oracle: true
+  congestion_cost: true
+  rolling_replanning: true
+  dependency_graph: true
+  intersection_reservations: true
+  deadlock_recovery: true
+  starvation_guard: true
+verification:
+  on_violation: abort
+objective:
+  w_completion: 1.0
+  w_distance: 1.0
+  w_congestion: 1.0
+  w_replanning: 1.0

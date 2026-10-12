@@ -1,0 +1,24 @@
+name: learning
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  python:
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"  # the same version as on the learning track machine (3.12.3)
+      - name: Install
+        run: |
+          python -m venv learning/.venv
+          learning/.venv/bin/pip install -r learning/requirements.txt -e learning
+      - name: Lint
+        run: |
+          learning/.venv/bin/ruff check learning
+          learning/.venv/bin/ruff format --check learning
+      - name: Unit tests
+        run: learning/.venv/bin/python -m pytest learning/tests -m "not core"
