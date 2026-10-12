@@ -149,7 +149,10 @@ perception/        D435 overhead grid detector (Stage 9b)
 benchmarks/        run configs, scripts, results, reference results
 maps/              generated warehouse maps: small (15x38, up to 25 robots), large (33x75,
                    up to 100 robots)
+docs/              learning track spec: a learned travel-time cost for allocation
 ```
+
+How to contribute: [CONTRIBUTING.md](CONTRIBUTING.md).
 
 ## Stages
 
