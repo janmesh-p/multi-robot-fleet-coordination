@@ -4,11 +4,10 @@ Follows section 7 of docs/learning_track.md. One collection writes everything un
 learning/data/<commit>/: configs/, runs/, and manifest.json. The manifest comes last, and only
 when every sweep succeeded, so a folder without one holds an incomplete collection.
 
-Before Stage 3 only allocation.method nearest runs, and pibt arrives in Stage 4. A plumbing
-check that runs today:
+Every logging allocator runs since Stage 3, but pibt arrives in Stage 4. Until then, the
+plumbing collection of section 11 uses independent_astar:
 
-    python -m fleet_learning.collect --allocators nearest --planner independent_astar \\
-        --fleet 5 --seeds 3000-3004
+    python -m fleet_learning.collect --planner independent_astar --seeds 3000-3004
 """
 
 from __future__ import annotations
@@ -419,8 +418,7 @@ def main(argv: list[str] | None = None) -> int:
         "--allocators",
         type=_arg(lambda text: _check(text.split(","), "allocators", ALLOCATORS)),
         default=ALLOCATORS,
-        help="comma-separated allocation methods (default: %(default)s); before Stage 3 only "
-        "nearest runs",
+        help="comma-separated allocation methods (default: nearest,hungarian,cost_aware)",
     )
     parser.add_argument(
         "--rates",
