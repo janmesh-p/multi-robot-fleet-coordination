@@ -9,7 +9,7 @@ import pandas as pd
 import pytest
 import yaml
 
-from fleet_learning import collect
+from fleet_learning import collect, schema
 
 REPO = Path(__file__).resolve().parents[2]
 TRACES = {"positions.csv", "steps.csv"}
@@ -335,20 +335,27 @@ def test_cli_reports_errors(monkeypatch, capsys):
 
 
 @pytest.mark.core
-def test_sweep_step_with_nearest(tmp_path, run_sweep):
-    # Before Stage 3 only nearest runs, and before Stage 4 only independent_astar.
-    manifest = run(tmp_path, run_sweep)
-    out = tmp_path / "data" / manifest["commit"] / "runs" / "collect_nearest_r010"
-    run_dirs = ["collect_nearest_r010_n5_s3000", "collect_nearest_r010_n5_s3001"]
-    assert files(out) == ["aggregate.csv", *run_dirs, "sweep.csv"]
-    for name, seed in zip(run_dirs, (3000, 3001), strict=True):
-        assert not TRACES & set(files(out / name))
-        summary = pd.read_csv(out / name / "summary.csv", dtype=str, keep_default_na=False)
-        assert summary.loc[0, "run"] == name
-        assert summary.loc[0, "allocator"] == "nearest"
-        assert summary.loc[0, "planner"] == "independent_astar"
-        assert summary.loc[0, ["fleet_size", "seed"]].tolist() == ["5", str(seed)]
-        config = yaml.safe_load((out / name / "config.yaml").read_text())
-        assert config["orders"]["arrival_rate"] == 0.1
-        assert config["map"]["file"] == str(REPO / "maps" / "warehouse_small.txt")
-    assert manifest["sweeps"][0]["trace_files_deleted"] == 4
+def test_sweep_step_with_every_allocator(tmp_path, run_sweep):
+    # Every logging allocator runs since Stage 3. Until Stage 4, only independent_astar does.
+    manifest = run(tmp_path, run_sweep, allocators=collect.ALLOCATORS)
+    runs = tmp_path / "data" / manifest["commit"] / "runs"
+    for allocator in collect.ALLOCATORS:
+        out = runs / f"collect_{allocator}_r010"
+        run_dirs = [f"{out.name}_n5_s3000", f"{out.name}_n5_s3001"]
+        assert files(out) == ["aggregate.csv", *run_dirs, "sweep.csv"]
+        for name, seed in zip(run_dirs, (3000, 3001), strict=True):
+            assert not TRACES & set(files(out / name))
+            summary = pd.read_csv(out / name / "summary.csv", dtype=str, keep_default_na=False)
+            columns = ["run", "allocator", "planner", "fleet_size", "seed"]
+            assert summary.loc[0, columns].tolist() == [
+                name,
+                allocator,
+                "independent_astar",
+                "5",
+                str(seed),
+            ]
+            config = yaml.safe_load((out / name / "config.yaml").read_text())
+            assert config["orders"]["arrival_rate"] == 0.1
+            assert config["map"]["file"] == str(REPO / "maps" / "warehouse_small.txt")
+            schema.read_assignments(out / name)  # written since Stage 3; passes every check
+    assert [sweep["trace_files_deleted"] for sweep in manifest["sweeps"]] == [4, 4, 4]
