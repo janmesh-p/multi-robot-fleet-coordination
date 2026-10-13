@@ -1,11 +1,11 @@
 run:
   name: "run_tiny"
-  seed: 3000
+  seed: 3113
   horizon_steps: 400
   warmup_steps: 100
-  output_dir: "run_tiny"
+  output_dir: "build/run_tiny"
 map:
-  file: "maps/warehouse_small.txt"
+  file: "../../../../maps/warehouse_small.txt"
 fleet:
   size: 5
 orders:
