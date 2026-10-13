@@ -72,7 +72,7 @@ def test_read_runs_takes_metadata_from_summary_and_config():
             "allocator": "hungarian",
             "planner": "independent_astar",
             "fleet_size": 5,
-            "seed": 3000,
+            "seed": 3113,
             "arrival_rate": 0.1,
             "steps_run": 400,
             "aborted": False,
@@ -88,7 +88,7 @@ def test_read_rows_adds_metadata_to_checked_rows():
     assert dtypes == dataset.METADATA_DTYPES
     pd.testing.assert_frame_equal(rows[list(schema.COLUMNS)], schema.read_assignments(RUN_TINY))
     assert (rows["run"] == "run_tiny").all()
-    assert (rows["seed"] == 3000).all()
+    assert (rows["seed"] == 3113).all()
 
 
 def test_metadata_never_shadows_an_assignments_column():
@@ -99,7 +99,7 @@ def test_rows_follow_run_directory_order(tmp_path):
     make_run(tmp_path, "b", seed=3001)
     make_run(tmp_path, "a", seed=3000)
     rows = load(tmp_path)
-    assert len(rows) == 32
+    assert len(rows) == 30
     assert list(rows["run"].unique()) == ["a", "b"]
 
 
@@ -181,7 +181,7 @@ DEATH = {"at": 50, "type": "robot_death", "robot": 1}
 def test_free_flow_bound_is_checked_only_without_lost_reports(tmp_path, edit, lossless):
     path = make_run(tmp_path, "a", edit_config=edit) / "assignments.csv"
     rows = pd.read_csv(path, dtype=str, keep_default_na=False)
-    rows.loc[0, "dist_to_pickup"] = "7"  # one more than its steps_to_pickup
+    rows.loc[0, "dist_to_pickup"] = str(int(rows.loc[0, "steps_to_pickup"]) + 1)
     rows.to_csv(path, index=False)
     runs = dataset.read_runs([tmp_path])
     assert runs.loc[0, "lossless"] == lossless
@@ -189,7 +189,7 @@ def test_free_flow_bound_is_checked_only_without_lost_reports(tmp_path, edit, lo
         with pytest.raises(schema.SchemaError, match="steps_to_pickup < dist_to_pickup"):
             dataset.read_rows(runs)
     else:
-        assert len(dataset.read_rows(runs)) == 16
+        assert len(dataset.read_rows(runs)) == 15
 
 
 def test_same_run_name_in_two_collections_fails(tmp_path):
@@ -206,17 +206,17 @@ def test_each_filter_drops_the_expected_fixture_rows():
     rows = load(RUN_TINY)
     assert orders_by_reason(rows, dataset.drop_reasons(rows)) == {
         "aborted": [],
-        "margin": [10, 11, 12, 13, 14, 15],  # t > 400 - 300
-        "unreached": [9],  # steps_to_pickup = -1 at t = 90
-        "kept": [0, 1, 2, 3, 4, 5, 6, 7, 8],
+        "margin": [10, 11, 13, 14, 17],  # t > 400 - 300
+        "unreached": [5, 8],  # steps_to_pickup = -1 at t = 74 and 85
+        "kept": [0, 1, 2, 3, 4, 6, 7, 9],
     }
 
 
 @pytest.mark.parametrize(
     ("margin", "expected"),
     [
-        (0, {"margin": [], "unreached": [9, 13, 15]}),
-        (320, {"margin": [8, 9, 10, 11, 12, 13, 14, 15], "unreached": []}),  # t > 80
+        (0, {"margin": [], "unreached": [5, 8, 17]}),
+        (320, {"margin": [7, 8, 10, 11, 13, 14, 17], "unreached": [5]}),  # t > 80
     ],
 )
 def test_margin_filter_applies_before_unreached(margin, expected):
@@ -224,14 +224,14 @@ def test_margin_filter_applies_before_unreached(margin, expected):
     dropped = orders_by_reason(rows, dataset.drop_reasons(rows, margin))
     assert {name: dropped[name] for name in expected} == expected
     assert dropped["aborted"] == []
-    assert len(dropped["kept"]) == 16 - sum(len(orders) for orders in expected.values())
+    assert len(dropped["kept"]) == 15 - sum(len(orders) for orders in expected.values())
 
 
 def test_aborted_run_drops_every_row(tmp_path):
     make_run(tmp_path, "a", aborted=True)
     rows = load(tmp_path)
     assert orders_by_reason(rows, dataset.drop_reasons(rows)) == {
-        "aborted": list(range(16)),
+        "aborted": sorted(rows["order"]),
         "margin": [],
         "unreached": [],
         "kept": [],
@@ -249,14 +249,14 @@ def test_apply_filters_counts_per_allocator_and_fleet_size(tmp_path):
     make_run(tmp_path, "c10", seed=3000, fleet_size=10, allocator="cost_aware")
     rows = load(tmp_path)
     kept, counts = dataset.apply_filters(rows)
-    common = {"margin": 6, "unreached": 1, "kept": 9, "unreached_share": 0.1}
+    common = {"margin": 5, "unreached": 2, "kept": 8, "unreached_share": 0.2}
     assert counts.to_dict("records") == [
-        {"allocator": "cost_aware", "fleet_size": 10, "rows": 16, "aborted": 0, **common},
-        {"allocator": "hungarian", "fleet_size": 5, "rows": 32, "aborted": 16, **common},
+        {"allocator": "cost_aware", "fleet_size": 10, "rows": 15, "aborted": 0, **common},
+        {"allocator": "hungarian", "fleet_size": 5, "rows": 30, "aborted": 15, **common},
     ]
     assert list(kept.columns) == list(rows.columns)
     assert sorted(set(kept["run"])) == ["c10", "h5_a"]
-    assert len(kept) == 18
+    assert len(kept) == 16
 
 
 def test_unreached_share_is_nan_without_rows_inside_the_margin(tmp_path):
@@ -322,7 +322,7 @@ def test_split_by_seed_refuses_seeds_kept_for_other_uses(tmp_path):
 
 def test_split_by_seed_takes_other_uses_by_name():
     rows = load(RUN_TINY)
-    assert len(dataset.split_by_seed(rows, splits=("plumbing",))["plumbing"]) == 16
+    assert len(dataset.split_by_seed(rows, splits=("plumbing",))["plumbing"]) == 15
     with pytest.raises(ValueError, match="unknown splits holdout"):
         dataset.split_by_seed(rows, splits=("holdout",))
 
@@ -338,20 +338,20 @@ def test_cli_reports_the_fixture(capsys):
     assert dataset.main([str(RUN_TINY)]) == 0
     out = capsys.readouterr().out
     assert "runs       1 (0 aborted)" in out
-    assert "rows       16 (9 kept)" in out
-    assert "kept steps_to_pickup: 61 steps" in out
-    assert "seeds      plumbing: 3000 (runs 1, rows kept 9)" in out
-    assert "hungarian, 5 robots: unreached rows are 10.0%" in out
+    assert "rows       15 (8 kept)" in out
+    assert "kept steps_to_pickup: 40 steps" in out
+    assert "seeds      plumbing: 3113 (runs 1, rows kept 8)" in out
+    assert "hungarian, 5 robots: unreached rows are 20.0%" in out
     assert "warning" not in out
 
 
 def test_cli_names_aborted_runs_and_a_short_margin(tmp_path, capsys):
     make_run(tmp_path, "a", aborted=True)
     make_run(tmp_path, "b", seed=3001)
-    assert dataset.main([str(tmp_path), "--margin", "100"]) == 0
+    assert dataset.main([str(tmp_path), "--margin", "60"]) == 0
     out = capsys.readouterr().out
     assert "a: a safety violation stopped this run" in out
-    assert "69 steps, is over" in out  # order 11, kept because t = 200 <= 400 - 100
+    assert "40 steps, is over" in out  # order 9, over half of 60
     assert "Raise --margin" in out
 
 

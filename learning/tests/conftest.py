@@ -22,6 +22,15 @@ def fleet_build() -> Path:
 
 
 @pytest.fixture
+def run_sim(fleet_build: Path) -> Path:
+    """The run_sim tool in the build folder."""
+    path = fleet_build / "run_sim"
+    if not os.access(path, os.X_OK):
+        pytest.fail(f"{path} is missing; build fleet_core first (CONTRIBUTING.md)")
+    return path
+
+
+@pytest.fixture
 def run_sweep(fleet_build: Path) -> Path:
     """The run_sweep tool in the build folder."""
     path = fleet_build / "run_sweep"

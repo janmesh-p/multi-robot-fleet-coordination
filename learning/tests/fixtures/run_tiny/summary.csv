@@ -1,2 +1,2 @@
 run,allocator,planner,fleet_size,seed,horizon,warmup,steps_run,orders_created,orders_delivered,orders_per_hour,mean_completion_steps,p95_completion_steps,completion_samples,utilization,conflicts,congestion_steps,planning_calls,planning_p50_ms,planning_p95_ms,expansions,violations,aborted,first_deadlock_step,deadlocks,deadlocked_robots,blocked_behind,stalled_robots,stalled_robot_steps,frozen_at,last_delivery_step,log_hash,wall_seconds
-run_tiny,hungarian,independent_astar,5,3000,400,100,400,40,11,0,0,0,0,1,0,0,0,0,0,0,0,false,-1,0,0,0,0,0,-1,318,0000000000000000,0
+run_tiny,hungarian,independent_astar,5,3113,400,100,400,31,10,60,159.5,204,2,0.9966666667,724,724,26,0.006202,0.012102,1068,0,false,106,2,4,0,5,849,332,322,31a164fe353d74d0,0.004314925

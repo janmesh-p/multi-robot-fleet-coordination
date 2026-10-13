@@ -237,9 +237,9 @@ def test_cli_check_and_predict(tmp_path, capsys):
     capsys.readouterr()
     assert model_io.main(["predict", str(path), str(FIXTURE / "assignments.csv")]) == 0
     lines = capsys.readouterr().out.splitlines()
+    rows = schema.read_assignments(FIXTURE)
     assert lines[0] == "row,prediction"
-    assert lines[1] == "0,6"
-    assert len(lines) == 17
+    assert lines[1:] == [f"{i},{dist}" for i, dist in enumerate(rows["dist_to_pickup"])]
 
 
 def test_cli_bad_model_exits_1(tmp_path, capsys):
