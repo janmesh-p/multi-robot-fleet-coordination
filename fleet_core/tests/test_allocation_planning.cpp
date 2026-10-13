@@ -26,7 +26,7 @@ class Nearest : public ::testing::Test {
         d_(world_.map(), true) {}
 
   std::vector<Assignment> run(const std::vector<RobotId>& robots) {
-    const auto allocator = makeAllocator(AllocationConfig{}, FeatureToggles{});
+    const auto allocator = makeAllocator(Config{});
     const AllocationContext context{world_, tasks_, d_, robots, tasks_.pending()};
     return allocator->assign(context);
   }
@@ -57,15 +57,6 @@ TEST_F(Nearest, TiesGoToTheLowerIdAndEachRobotOnce) {
   EXPECT_EQ(a[0].robot, 1);
   EXPECT_EQ(a[1].robot, 2);
   EXPECT_EQ(a[2].robot, 0);
-}
-
-TEST(AllocatorFactory, UnimplementedMethodsThrow) {
-  AllocationConfig config;
-  config.method = AllocationMethod::kHungarian;
-  EXPECT_THROW(makeAllocator(config, FeatureToggles{}), std::runtime_error);
-  config.method = AllocationMethod::kCostAware;
-  EXPECT_THROW(makeAllocator(config, FeatureToggles{}), std::runtime_error);
-  EXPECT_EQ(makeAllocator(AllocationConfig{}, FeatureToggles{})->name(), "nearest");
 }
 
 PlanResult planOne(const WorldModel& world, const DistanceOracle& d, Cell start, Cell goal,

@@ -1,23 +1,26 @@
 #include "fleet_core/allocation/task_allocator.hpp"
 
 #include <stdexcept>
-#include <string>
 
 #include "allocators.hpp"
+#include "fleet_core/allocation/cost_model.hpp"
 
 namespace fleet_core {
 
-std::unique_ptr<TaskAllocator> makeAllocator(const AllocationConfig& config,
-                                             const FeatureToggles& /*features*/) {
-  switch (config.method) {
+std::unique_ptr<TaskAllocator> makeAllocator(const Config& config) {
+  const AllocationConfig& a = config.allocation;
+  switch (a.method) {
     case AllocationMethod::kNearest:
       return makeNearestAllocator();
     case AllocationMethod::kHungarian:
+      return makeHungarianAllocator();
     case AllocationMethod::kCostAware:
-      break;  // Stage 3
+      return makeCostAwareAllocator(a.congestion_weight, config.features.congestion_cost,
+                                    config.orders.service_steps);
+    case AllocationMethod::kLearned:
+      return makeLearnedAllocator(CostModel::load(a.model_file));
   }
-  throw std::runtime_error("allocation method '" + std::string(toString(config.method)) +
-                           "' is not implemented yet");
+  throw std::logic_error("makeAllocator: unknown allocation method");
 }
 
 }  // namespace fleet_core

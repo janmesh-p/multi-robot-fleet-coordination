@@ -20,8 +20,7 @@ std::vector<Cell> initialCells(const WorldModel& world) {
 }  // namespace
 
 FleetManager::FleetManager(const Config& config, WorldModel world)
-    : FleetManager(config, std::move(world), makeAllocator(config.allocation, config.features),
-                   makePlanner(config.planning)) {}
+    : FleetManager(config, std::move(world), makeAllocator(config), makePlanner(config.planning)) {}
 
 FleetManager::FleetManager(const Config& config, WorldModel world,
                            std::unique_ptr<TaskAllocator> allocator,
@@ -61,10 +60,11 @@ TickOutput FleetManager::tick(const TickInput& input) {
   const FaultActions faults = faults_.update(input.now, world_, tasks_);
   output.stats.robots_declared_dead = static_cast<int32_t>(faults.declared_dead.size());
   output.stats.tasks_requeued = static_cast<int32_t>(faults.requeued.size());
+  output.requeued = faults.requeued;
 
   for (const Task& task : input.new_orders) tasks_.add(task);
   confirmProgress(input.now);
-  allocate(input.now, output.stats);
+  allocate(input.now, output);
   plan(input.now, computeGoals(), output.stats);
   output.commands = commands(input.now);
   return output;
@@ -97,7 +97,7 @@ void FleetManager::confirmProgress(Timestep now) {
   }
 }
 
-void FleetManager::allocate(Timestep now, TickStats& stats) {
+void FleetManager::allocate(Timestep now, TickOutput& output) {
   if (tasks_.pendingCount() == 0) return;
   AllocationContext context{world_, tasks_, distances_, {}, tasks_.pending()};
   for (const RobotBelief& b : world_.robots()) {
@@ -105,8 +105,15 @@ void FleetManager::allocate(Timestep now, TickStats& stats) {
   }
   if (context.robots.empty()) return;
   const std::vector<Assignment> assignments = allocator_->assign(context);
+  if (!assignments.empty()) {
+    const PairFeatureTable table(context);  // before this tick's assignments change the counts
+    for (const Assignment& a : assignments) {
+      output.assignments.push_back(AssignmentRecord{
+          now, a.task, a.robot, tasks_.get(a.task).order.pickup, table.pair(a.robot, a.task)});
+    }
+  }
   for (const Assignment& a : assignments) tasks_.assign(a.task, a.robot, now);
-  stats.assignments = static_cast<int32_t>(assignments.size());
+  output.stats.assignments = static_cast<int32_t>(assignments.size());
 }
 
 std::vector<Cell> FleetManager::computeGoals() {

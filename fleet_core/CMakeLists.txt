@@ -9,7 +9,7 @@ else()
 endif()
 
 option(FLEET_CORE_BUILD_TESTS "Build fleet_core unit tests" ${FLEET_CORE_TOP_LEVEL})
-option(FLEET_CORE_BUILD_APPS "Build fleet_core apps (run_sim, run_sweep)" ${FLEET_CORE_TOP_LEVEL})
+option(FLEET_CORE_BUILD_APPS "Build fleet_core apps (run_sim, run_sweep, predict_cost, bench_allocation)" ${FLEET_CORE_TOP_LEVEL})
 option(FLEET_WERROR "Treat compiler warnings as errors" ON)
 option(FLEET_SANITIZE "Build with AddressSanitizer and UndefinedBehaviorSanitizer" OFF)
 
@@ -38,6 +38,7 @@ add_library(fleet_core
   src/common/config.cpp
   src/common/rng.cpp
   src/common/types.cpp
+  src/common/json.cpp
   src/world/grid_map.cpp
   src/world/map_generator.cpp
   src/world/distance_oracle.cpp
@@ -48,6 +49,10 @@ add_library(fleet_core
   src/tasks/parking.cpp
   src/allocation/task_allocator.cpp
   src/allocation/nearest_allocator.cpp
+  src/allocation/assignment_solver.cpp
+  src/allocation/pair_features.cpp
+  src/allocation/cost_model.cpp
+  src/allocation/matching_allocator.cpp
   src/planning/path_planner.cpp
   src/planning/independent_astar.cpp
   src/traffic/traffic_manager.cpp
@@ -58,6 +63,7 @@ add_library(fleet_core
   src/verification/progress_monitor.cpp
   src/metrics/run_stats.cpp
   src/metrics/metrics_collector.cpp
+  src/metrics/assignment_log.cpp
   src/fleet_manager.cpp
   src/simulation.cpp
   src/sweep.cpp
@@ -70,7 +76,7 @@ set_target_properties(fleet_core PROPERTIES POSITION_INDEPENDENT_CODE ON)
 fleet_configure_target(fleet_core)
 
 if(FLEET_CORE_BUILD_APPS)
-  foreach(app run_sim run_sweep)
+  foreach(app run_sim run_sweep predict_cost bench_allocation)
     add_executable(${app} apps/${app}.cpp)
     target_link_libraries(${app} PRIVATE fleet_core)
     fleet_configure_target(${app})

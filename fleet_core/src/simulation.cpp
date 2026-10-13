@@ -64,8 +64,8 @@ Simulation::Simulation(const Config& config) : config_(config), map_(buildMap(co
   validateConfig(config_);
 
   // What this stage can run. Each gap names the stage that fills it.
-  makeAllocator(config_.allocation, config_.features);  // throws if not implemented
-  makePlanner(config_.planning);                        // throws if not implemented
+  makeAllocator(config_);         // learned: rejects a bad model file now, naming the field
+  makePlanner(config_.planning);  // throws if not implemented
   if (config_.faults.packet_loss > 0.0) unsupported("faults.packet_loss arrives in Stage 6");
   for (const FaultEvent& e : config_.faults.events) {
     const bool cells = e.type == FaultType::kBlockCells || e.type == FaultType::kUnblockCells;
@@ -118,6 +118,7 @@ RunResult Simulation::run(const std::optional<std::filesystem::path>& out_dir) c
   InvariantChecker checker(config_.planning.method != PlanningMethod::kIndependentAStar);
   ProgressMonitor progress(config_.fleet.size);
   RunStats stats(config_.fleet.size, config_.run.warmup_steps);
+  AssignmentLog assignments;
   std::optional<MetricsCollector> writer;
   if (out_dir) {
     writer.emplace(*out_dir);
@@ -141,6 +142,7 @@ RunResult Simulation::run(const std::optional<std::filesystem::path>& out_dir) c
     const TickOutput output = fleet.tick(input);
     robots.dispatch(t, output.commands);
     robots.step(t);
+    assignments.record(output, robots.lastStep());
 
     const TruthSnapshot truth = robots.snapshot();
     std::vector<Violation> found =
@@ -178,10 +180,12 @@ RunResult Simulation::run(const std::optional<std::filesystem::path>& out_dir) c
   result.summary.frozen_at = p.frozen_at;
   result.summary.last_delivery_step = p.last_delivery_step;
   result.deadlocks = progress.deadlocks();
+  result.assignments = assignments.rows();
   if (writer) {
     writer->writeSummary(result.summary);
     writer->writeViolations(result.violations);
     writer->writeDeadlocks(result.deadlocks);
+    writer->writeAssignments(result.assignments);
   }
   return result;
 }

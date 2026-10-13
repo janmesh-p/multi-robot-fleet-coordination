@@ -46,6 +46,9 @@ jobs:
           ./build/run_sweep --config benchmarks/configs/baseline.yaml --out build/baseline
           --check benchmarks/reference/baseline_sweep.csv
 
+      - name: Allocation benchmark runs (hungarian never worse than nearest)
+        run: ./build/bench_allocation --rounds 200 --out build/bench_allocation.csv
+
   format:
     runs-on: ubuntu-22.04
     steps:

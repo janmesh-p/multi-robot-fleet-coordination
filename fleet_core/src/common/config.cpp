@@ -23,6 +23,8 @@ std::string_view toString(AllocationMethod method) {
       return "hungarian";
     case AllocationMethod::kCostAware:
       return "cost_aware";
+    case AllocationMethod::kLearned:
+      return "learned";
   }
   return "unknown";
 }
@@ -71,8 +73,9 @@ std::string_view toString(FaultType type) {
 
 namespace {
 
-constexpr std::array<AllocationMethod, 3> kAllocationMethods{
-    AllocationMethod::kNearest, AllocationMethod::kHungarian, AllocationMethod::kCostAware};
+constexpr std::array<AllocationMethod, 4> kAllocationMethods{
+    AllocationMethod::kNearest, AllocationMethod::kHungarian, AllocationMethod::kCostAware,
+    AllocationMethod::kLearned};
 constexpr std::array<PlanningMethod, 6> kPlanningMethods{PlanningMethod::kIndependentAStar,
                                                          PlanningMethod::kPrioritized,
                                                          PlanningMethod::kWindowedCoopAStar,
@@ -360,12 +363,19 @@ void parseOrders(const YAML::Node& node, OrdersConfig& orders) {
   s.finish();
 }
 
-void parseAllocation(const YAML::Node& node, AllocationConfig& allocation) {
+void parseAllocation(const YAML::Node& node, const std::filesystem::path& base_dir,
+                     AllocationConfig& allocation) {
   Section s(node, "allocation");
   field(s, "method", allocation.method, [](const YAML::Node& n, const std::string& p) {
     return readEnum(n, p, kAllocationMethods);
   });
   field(s, "congestion_weight", allocation.congestion_weight, readDouble);
+  if (const auto file = s.take("model_file")) {
+    std::filesystem::path path = readString(*file, "allocation.model_file");
+    if (path.empty()) fail("allocation.model_file", *file, "must not be empty");
+    if (path.is_relative()) path = std::filesystem::absolute(base_dir) / path;
+    allocation.model_file = path.lexically_normal();
+  }
   s.finish();
 }
 
@@ -505,6 +515,11 @@ void validateConfig(const Config& c) {
 
   require(isNonNegative(c.allocation.congestion_weight),
           "allocation.congestion_weight must be >= 0" + gotNumber(c.allocation.congestion_weight));
+  const bool learned = c.allocation.method == AllocationMethod::kLearned;
+  require(!learned || !c.allocation.model_file.empty(),
+          "allocation.model_file is required with allocation.method learned");
+  require(learned || c.allocation.model_file.empty(),
+          "allocation.model_file is only for allocation.method learned");
 
   require(c.planning.window >= 1, "planning.window must be >= 1" + gotInt(c.planning.window));
   require(
@@ -571,7 +586,7 @@ Config parseConfig(std::string_view yaml, const std::filesystem::path& base_dir)
   const auto map = top.take("map");
   if (const auto n = top.take("fleet")) parseFleet(*n, config.fleet);
   if (const auto n = top.take("orders")) parseOrders(*n, config.orders);
-  if (const auto n = top.take("allocation")) parseAllocation(*n, config.allocation);
+  if (const auto n = top.take("allocation")) parseAllocation(*n, base_dir, config.allocation);
   if (const auto n = top.take("planning")) parsePlanning(*n, config.planning);
   if (const auto n = top.take("execution")) parseExecution(*n, config.execution);
   if (const auto n = top.take("faults")) parseFaults(*n, config.faults);
@@ -586,6 +601,11 @@ Config parseConfig(std::string_view yaml, const std::filesystem::path& base_dir)
   validateConfig(config);
   if (!config.map.generator && !std::filesystem::is_regular_file(config.map.file)) {
     throw ConfigError("config: map.file: file not found: " + config.map.file.string());
+  }
+  if (!config.allocation.model_file.empty() &&
+      !std::filesystem::is_regular_file(config.allocation.model_file)) {
+    throw ConfigError("config: allocation.model_file: file not found: " +
+                      config.allocation.model_file.string());
   }
   return config;
 }
@@ -633,8 +653,11 @@ std::string dumpConfig(const Config& c) {
     << "  service_steps: " << c.orders.service_steps << "\n"
     << "allocation:\n"
     << "  method: " << toString(c.allocation.method) << "\n"
-    << "  congestion_weight: " << formatDouble(c.allocation.congestion_weight) << "\n"
-    << "planning:\n"
+    << "  congestion_weight: " << formatDouble(c.allocation.congestion_weight) << "\n";
+  if (!c.allocation.model_file.empty()) {
+    o << "  model_file: " << quote(c.allocation.model_file.string()) << "\n";
+  }
+  o << "planning:\n"
     << "  method: " << toString(c.planning.method) << "\n"
     << "  window: " << c.planning.window << "\n"
     << "  replan_period: " << c.planning.replan_period << "\n"

@@ -14,6 +14,7 @@
 
 #include "fleet_core/execution/grid_executor.hpp"
 #include "fleet_core/fleet_manager.hpp"
+#include "fleet_core/metrics/assignment_log.hpp"
 #include "fleet_core/simulation.hpp"
 #include "fleet_core/verification/invariant_checker.hpp"
 
@@ -36,6 +37,7 @@ struct Harness {
   GridExecutor robots;
   FleetManager fleet;
   InvariantChecker checker{false};
+  AssignmentLog log{};
   int64_t issued{0};
   std::vector<Violation> violations{};
 
@@ -54,6 +56,7 @@ struct Harness {
     const TickOutput output = fleet.tick(input);
     robots.dispatch(t, output.commands);
     robots.step(t);
+    log.record(output, robots.lastStep());
     for (Violation& v :
          checker.check(robots.map(), robots.lastStep(), robots.snapshot(), fleet.tasks(), issued)) {
       violations.push_back(std::move(v));
@@ -100,6 +103,18 @@ TEST(FleetManager, SingleRobotTimingIsExact) {
   EXPECT_EQ(h.robots.robots()[0].cell, (Cell{0, 0}));  // back home
   EXPECT_EQ(h.robots.robots()[0].status, RobotStatus::kIdle);
   EXPECT_TRUE(h.violations.empty());
+
+  // Its assignments.csv row: nothing slowed the robot, so steps_to_pickup is the distance.
+  const std::vector<AssignmentRow> rows = h.log.rows();
+  ASSERT_EQ(rows.size(), 1U);
+  EXPECT_EQ(rows[0].record.t, 0);
+  EXPECT_EQ(rows[0].record.features.dist_to_pickup, 2);
+  EXPECT_EQ(rows[0].record.features.dist_pickup_to_dropoff, 6);
+  EXPECT_EQ(rows[0].record.features.robot_on_endpoint, 1);
+  EXPECT_EQ(rows[0].arrived_t, 1);
+  EXPECT_EQ(rows[0].steps_to_pickup, 2);
+  EXPECT_EQ(rows[0].delivered_t, 11);
+  EXPECT_EQ(rows[0].end, AssignmentEnd::kDelivered);
 }
 
 // Two robots want the same pickup: the second waits on a spare parking cell (not its home,
@@ -218,9 +233,6 @@ TEST(Simulation, RejectsWhatThisStageCannotRun) {
   c.faults.events = {FaultEvent{5, FaultType::kRobotDeath, 0, {}, 0}};
   expectRejected(c, "Stage 6");
   c = smallConfig();
-  c.allocation.method = AllocationMethod::kHungarian;
-  expectRejected(c, "not implemented yet");
-  c = smallConfig();
   c.planning.method = PlanningMethod::kCbs;
   expectRejected(c, "not implemented yet");
 }
@@ -231,7 +243,7 @@ TEST(Simulation, WritesTheRunDirectory) {
   std::filesystem::remove_all(dir);
   const RunResult result = Simulation(smallConfig()).run(dir);
   for (const char* name : {"config.yaml", "map.txt", "steps.csv", "positions.csv", "summary.csv",
-                           "violations.csv", "deadlocks.csv"}) {
+                           "violations.csv", "deadlocks.csv", "assignments.csv"}) {
     EXPECT_TRUE(std::filesystem::is_regular_file(dir / name)) << name;
   }
   std::ifstream summary(dir / "summary.csv");
@@ -244,6 +256,88 @@ TEST(Simulation, WritesTheRunDirectory) {
   // The written config reproduces the run.
   EXPECT_EQ(Simulation(loadConfig(dir / "config.yaml")).run().summary.log_hash,
             result.summary.log_hash);
+  std::filesystem::remove_all(dir);
+}
+
+// What docs/learning_track.md promises about assignments.csv, on real runs of every allocator.
+TEST(Simulation, AssignmentRowsKeepTheContract) {
+  for (const AllocationMethod method :
+       {AllocationMethod::kNearest, AllocationMethod::kHungarian, AllocationMethod::kCostAware}) {
+    Config c = smallConfig();
+    c.allocation.method = method;
+    const RunResult result = Simulation(c).run();
+    EXPECT_EQ(result.summary.violations, 0) << toString(method);
+    ASSERT_FALSE(result.assignments.empty());
+    int64_t delivered = 0;
+    for (size_t i = 0; i < result.assignments.size(); ++i) {
+      const AssignmentRow& row = result.assignments[i];
+      const PairFeatures& f = row.record.features;
+      EXPECT_EQ(f.available_robots + f.busy_robots, f.alive_robots);
+      if (row.steps_to_pickup >= 0) {
+        EXPECT_GE(row.steps_to_pickup, f.dist_to_pickup);
+        EXPECT_EQ(row.arrived_t, row.record.t + row.steps_to_pickup - 1);
+      } else {
+        EXPECT_EQ(row.arrived_t, -1);
+      }
+      if (row.end == AssignmentEnd::kDelivered) {
+        ++delivered;
+        EXPECT_GT(row.delivered_t, row.arrived_t);
+      } else {
+        EXPECT_EQ(row.delivered_t, -1);
+      }
+      if (i > 0) {
+        const AssignmentRecord& prev = result.assignments[i - 1].record;
+        EXPECT_TRUE(prev.t < row.record.t ||
+                    (prev.t == row.record.t && prev.robot < row.record.robot));
+      }
+    }
+    EXPECT_EQ(delivered, result.summary.orders_delivered) << toString(method);
+  }
+}
+
+// The free-flow model's cost is exactly dist_to_pickup, so learned with it must replay
+// hungarian step for step. docs/learning_track.md promises this test.
+TEST(Simulation, LearnedWithTheFreeFlowModelReplaysHungarian) {
+  const std::filesystem::path dir =
+      std::filesystem::temp_directory_path() / ("fleet_core_learned_" + std::to_string(::getpid()));
+  std::filesystem::create_directories(dir);
+  std::ofstream(dir / "free_flow.json")
+      << R"({"format": "fleet_cost_model", "version": 1, "target": "steps_to_pickup",
+            "features": ["dist_to_pickup"], "mean": [0], "scale": [1],
+            "layers": [{"weights": [[0]], "bias": [0], "activation": "identity"}],
+            "base_feature": "dist_to_pickup"})";
+  for (const int32_t fleet : {5, 10}) {
+    Config h = smallConfig();
+    h.fleet.size = fleet;
+    h.allocation.method = AllocationMethod::kHungarian;
+    Config l = h;
+    l.allocation.method = AllocationMethod::kLearned;
+    l.allocation.model_file = dir / "free_flow.json";
+    const RunResult a = Simulation(h).run();
+    const RunResult b = Simulation(l).run();
+    EXPECT_EQ(a.summary.log_hash, b.summary.log_hash) << fleet << " robots";
+    ASSERT_EQ(a.assignments.size(), b.assignments.size());
+    for (size_t i = 0; i < a.assignments.size(); ++i) {
+      EXPECT_EQ(assignmentCsvRow(a.assignments[i]), assignmentCsvRow(b.assignments[i]));
+    }
+  }
+  std::filesystem::remove_all(dir);
+}
+
+TEST(Simulation, RejectsABadModelFileAtStartup) {
+  const std::filesystem::path dir = std::filesystem::temp_directory_path() /
+                                    ("fleet_core_badmodel_" + std::to_string(::getpid()));
+  std::filesystem::create_directories(dir);
+  std::ofstream(dir / "bad.json") << R"({"format": "fleet_cost_model", "version": 2})";
+  Config c = smallConfig();
+  c.allocation.method = AllocationMethod::kLearned;
+  c.allocation.model_file = dir / "bad.json";
+  try {
+    Simulation sim(c);
+    ADD_FAILURE() << "expected ModelError";
+  } catch (const std::runtime_error& e) {
+    EXPECT_NE(std::string(e.what()).find("version"), std::string::npos) << e.what();
+  }
   std::filesystem::remove_all(dir);
 }
 

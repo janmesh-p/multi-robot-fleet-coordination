@@ -1,4 +1,7 @@
+#include <unistd.h>
+
 #include <filesystem>
+#include <fstream>
 #include <string>
 #include <vector>
 
@@ -102,7 +105,7 @@ TEST(Config, UnknownEnumValueListsChoices) {
               {"planning.method", "'astar'",
                "independent_astar | prioritized | windowed_coop_astar | cbs | ecbs | pibt"});
   expectError(withMap("allocation:\n  method: auction\n"),
-              {"allocation.method", "nearest | hungarian | cost_aware"});
+              {"allocation.method", "nearest | hungarian | cost_aware | learned"});
   expectError(withMap("verification:\n  on_violation: ignore\n"), {"abort | record"});
 }
 
@@ -254,6 +257,35 @@ TEST(Config, ValidateCatchesConfigsBuiltInCode) {
   EXPECT_NO_THROW(validateConfig(c));
   c.planning.replan_period = c.planning.window + 1;
   EXPECT_THROW(validateConfig(c), ConfigError);
+}
+
+TEST(Config, ModelFileRules) {
+  expectError(withMap("allocation: {method: learned}\n"),
+              {"allocation.model_file is required with allocation.method learned"});
+  expectError(withMap("allocation: {method: hungarian, model_file: m.json}\n"),
+              {"allocation.model_file is only for allocation.method learned"});
+  expectError(withMap("allocation: {method: learned, model_file: \"\"}\n"),
+              {"allocation.model_file", "must not be empty"});
+  expectError(withMap("allocation: {method: learned, model_file: no_such_model.json}\n"),
+              {"allocation.model_file", "file not found"});
+
+  // A relative path resolves against the config file's folder, like map.file.
+  const std::filesystem::path dir =
+      std::filesystem::temp_directory_path() / ("fleet_core_cfg_" + std::to_string(::getpid()));
+  std::filesystem::create_directories(dir / "models");
+  std::filesystem::copy_file(kMaps / "warehouse_small.txt", dir / "warehouse_small.txt",
+                             std::filesystem::copy_options::overwrite_existing);
+  std::ofstream(dir / "models" / "m.json") << "{}";  // the config only checks that it exists
+  std::ofstream(dir / "run.yaml") << withMap(
+      "allocation: {method: learned, model_file: models/m.json}\n");
+  const Config c = loadConfig(dir / "run.yaml");
+  EXPECT_EQ(c.allocation.method, AllocationMethod::kLearned);
+  EXPECT_EQ(c.allocation.model_file, (dir / "models" / "m.json").lexically_normal());
+  const std::string dumped = dumpConfig(c);
+  EXPECT_NE(dumped.find("  model_file: "), std::string::npos);
+  EXPECT_EQ(dumpConfig(parseConfig(dumped, "/")), dumped);
+  EXPECT_EQ(dumpConfig(Config{}).find("model_file"), std::string::npos);
+  std::filesystem::remove_all(dir);
 }
 
 TEST(Config, MapGeneratorParsesAndRoundTrips) {

@@ -5,6 +5,7 @@
 #include <optional>
 #include <vector>
 
+#include "fleet_core/allocation/pair_features.hpp"
 #include "fleet_core/allocation/task_allocator.hpp"
 #include "fleet_core/common/config.hpp"
 #include "fleet_core/common/types.hpp"
@@ -27,8 +28,21 @@ struct TickInput {
   std::vector<CellObservation> observations{};  // blocked or reopened cells
 };
 
+// One assignment made in a tick, with what the coordinator saw when it made it: the features of
+// the pair, from its belief before any of that tick's assignments. The runner joins these with
+// ground-truth outcomes into assignments.csv; the coordinator never sees the outcomes.
+struct AssignmentRecord {
+  Timestep t{0};
+  TaskId order{-1};
+  RobotId robot{-1};
+  Cell pickup{};
+  PairFeatures features{};
+};
+
 struct TickOutput {
   std::vector<RobotCommand> commands{};  // one per robot believed alive, every tick
+  std::vector<AssignmentRecord> assignments{};
+  std::vector<TaskId> requeued{};  // orders taken back from robots declared dead (Stage 6)
   TickStats stats{};
 };
 
@@ -76,7 +90,7 @@ class FleetManager {
   };
 
   void confirmProgress(Timestep now);
-  void allocate(Timestep now, TickStats& stats);
+  void allocate(Timestep now, TickOutput& output);
   std::vector<Cell> computeGoals();
   void plan(Timestep now, const std::vector<Cell>& goals, TickStats& stats);
   void commit(RobotId robot, const Cell& goal, Path path, bool valid,

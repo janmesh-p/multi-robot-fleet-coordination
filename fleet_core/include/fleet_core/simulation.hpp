@@ -8,6 +8,7 @@
 
 #include "fleet_core/common/config.hpp"
 #include "fleet_core/common/types.hpp"
+#include "fleet_core/metrics/assignment_log.hpp"
 #include "fleet_core/metrics/run_stats.hpp"
 #include "fleet_core/verification/invariant_checker.hpp"
 #include "fleet_core/verification/progress_monitor.hpp"
@@ -19,6 +20,7 @@ struct RunResult {
   RunSummary summary{};
   std::vector<Violation> violations{};  // the first kMaxStoredViolations
   std::vector<Deadlock> deadlocks{};
+  std::vector<AssignmentRow> assignments{};  // sorted by t, then robot
 };
 
 // One grid-simulator run, wired in the order a real deployment sees it each step:
@@ -37,7 +39,7 @@ class Simulation {
   // Runs to the horizon, or to the first violation when verification.on_violation is abort.
   // Each call starts from the initial state, so two calls give the same result.
   // Writes config.yaml, map.txt, steps.csv, positions.csv, summary.csv, violations.csv,
-  // deadlocks.csv to out_dir when given.
+  // deadlocks.csv, assignments.csv to out_dir when given.
   RunResult run(const std::optional<std::filesystem::path>& out_dir = std::nullopt) const;
 
   const Config& config() const { return config_; }

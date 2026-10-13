@@ -12,7 +12,7 @@
 
 namespace fleet_core {
 
-enum class AllocationMethod : uint8_t { kNearest, kHungarian, kCostAware };
+enum class AllocationMethod : uint8_t { kNearest, kHungarian, kCostAware, kLearned };
 
 enum class PlanningMethod : uint8_t {
   kIndependentAStar,
@@ -74,7 +74,8 @@ struct OrdersConfig {
 
 struct AllocationConfig {
   AllocationMethod method{AllocationMethod::kNearest};
-  double congestion_weight{1.0};  // cost_aware only
+  double congestion_weight{1.0};       // cost_aware only
+  std::filesystem::path model_file{};  // learned only, and required there; absolute after loading
 };
 
 struct PlanningConfig {
@@ -142,11 +143,11 @@ class ConfigError : public std::runtime_error {
 
 // Reads a YAML run config. Unknown or duplicate keys, wrong types, and out-of-range values
 // throw ConfigError naming the key and line, so a typo never silently falls back to a default.
-// Missing keys keep the defaults above. map.file resolves relative to the config file and
-// must exist; map.generator describes a generated map instead.
+// Missing keys keep the defaults above. map.file and allocation.model_file resolve relative to the
+// config file and must exist; map.generator describes a generated map instead.
 Config loadConfig(const std::filesystem::path& file);
 
-// Same, from text. A relative map.file resolves against base_dir.
+// Same, from text. A relative map.file or allocation.model_file resolves against base_dir.
 Config parseConfig(std::string_view yaml, const std::filesystem::path& base_dir);
 
 // Range and cross-field checks. parseConfig calls it; call it on configs built in code.

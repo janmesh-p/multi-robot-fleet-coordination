@@ -4,10 +4,12 @@ Warehouse multi-agent pickup and delivery (MAPD): task allocation, lifelong mult
 finding, traffic management, and fault recovery for up to 100 robots. Grid simulator for scale,
 Isaac Sim for physics, desk hardware in the loop.
 
-**Status:** Stage 2 (uncoordinated baseline) done. The baseline gives every robot its own
-shortest path and ignores the others. In all 15 baseline runs, two robots soon meet head-on in a
-one-cell aisle and the fleet freezes within a few simulated minutes ([numbers](#baseline-stage-2)).
-Stage 4 adds coordinated planners. Every number in this README comes from measured runs.
+**Status:** Stage 3 (task allocation) done. The optimal matching (Hungarian method) cuts the
+total distance from robots to their pickups by 5 to 11% against greedy nearest-first on the same
+rounds ([numbers](#allocation-stage-3)). Every run still freezes within a few simulated minutes,
+because each robot still plans its own shortest path and ignores the others
+([baseline](#baseline-stage-2)); Stage 4 adds coordinated planners. Every number in this README
+comes from measured runs.
 
 ## Architecture
 
@@ -17,7 +19,7 @@ Stage 4 adds coordinated planners. Every number in this README comes from measur
    ^                                 |  WorldModel     belief, not truth
    |                                 |  FaultManager   leases, requeue, false deaths
    |                                 |  TaskManager    order lifecycle
-   |                                 |  TaskAllocator  nearest | hungarian | cost_aware
+   |                                 |  TaskAllocator  nearest | hungarian | cost_aware | learned
    |                                 |  PathPlanner    independent A* ... CBS, ECBS, PIBT
    |                                 |  TrafficManager permits, dependency graph, deadlocks
    |
@@ -49,8 +51,9 @@ are blocked behind it. A robot with work that makes no progress for 30 steps is 
 frozen when no robot makes progress for the rest of the run while orders remain.
 
 A run directory holds `config.yaml` (loading it reproduces the run), `map.txt`, `steps.csv`,
-`positions.csv`, `summary.csv`, `violations.csv`, and `deadlocks.csv`. Replay one as a GIF
-(robots on a deadlock get a thick ring):
+`positions.csv`, `summary.csv`, `violations.csv`, `deadlocks.csv`, and `assignments.csv` (one row
+per assignment: what the coordinator knew about the pair, and how long the robot really took to
+reach the pickup). Replay one as a GIF (robots on a deadlock get a thick ring):
 
 ```bash
 pip install matplotlib
@@ -85,6 +88,51 @@ Reproduce, and check that nothing has moved:
 this check on every push, on every column except timing, so later stages cannot quietly change
 the baseline they are measured against. `--runs` also writes each run directory.
 
+## Allocation (Stage 3)
+
+When orders wait and robots are free, the allocator decides who fetches what:
+
+| `allocation.method` | Decision |
+|---|---|
+| `nearest` | oldest order first, to the closest free robot (the Stage 1 baseline) |
+| `hungarian` | one minimum-cost matching of all free robots and all waiting orders; cost of a pair = shortest-path distance to the pickup |
+| `cost_aware` | the same matching; cost = distance + `congestion_weight` x (robots inside the rectangle between robot and pickup + `service_steps` x robots already heading to that pickup) |
+| `learned` | the same matching; cost = a trained model's prediction of the real steps to the pickup ([learning track](docs/learning_track.md)) |
+
+The matching is the Hungarian method in its shortest augmenting path form, O(k^2 n) for k free
+robots and n waiting orders, or the other way round. Tests check it against brute force on random
+matrices.
+
+Both allocators solved the same random rounds on `warehouse_small`: robots on random free cells,
+orders at random stations. The table compares the total distance from robots to their pickups.
+
+| Robots | Waiting orders | Nearest, mean total | Hungarian, mean total | Hungarian lower by | Rounds where Hungarian is strictly better | Hungarian solve, p95 |
+|---:|---:|---:|---:|---:|---:|---:|
+| 5 | 5 | 116.2 | 109.4 | 5.9% | 72.6% | 0.001 ms |
+| 10 | 10 | 223.9 | 210.4 | 6.0% | 95.4% | 0.005 ms |
+| 25 | 25 | 543.8 | 516.8 | 5.0% | 99.9% | 0.040 ms |
+| 5 | 10 | 114.2 | 101.2 | 11.4% | 98.2% | 0.002 ms |
+| 10 | 20 | 224.7 | 201.4 | 10.4% | 100.0% | 0.007 ms |
+| 25 | 50 | 540.6 | 499.7 | 7.6% | 100.0% | 0.055 ms |
+
+- 1000 rounds per row, seed 1. Hungarian is never worse; the benchmark stops with an error if it
+  ever is.
+- With more orders than robots, nearest always serves the oldest orders, while the matching may
+  pick closer ones first, so part of that gain is order choice, not only who-goes-where.
+- On `warehouse_large`, 100 robots and 100 orders take 1.1 ms at p95 (200 rounds).
+- Solve times are wall time on one core of the build machine; every other number depends only
+  on the seed.
+
+What this does not show: throughput. With independent planning every run still freezes, whatever
+the allocator, so orders per hour cannot separate them until Stage 4. `cost_aware` and `learned`
+target traffic and busy stations, which these traffic-free rounds do not have.
+
+```bash
+./build/bench_allocation --out benchmarks/results/bench_allocation.csv
+./build/bench_allocation --map maps/warehouse_large.txt --sizes 25x25,50x50,100x100,100x200 \
+  --rounds 200
+```
+
 ## Build and test (fleet_core)
 
 ```bash
@@ -94,6 +142,7 @@ cmake --build build
 ctest --test-dir build --output-on-failure
 ./build/run_sim --config benchmarks/configs/default.yaml
 ./build/run_sweep --config benchmarks/configs/baseline.yaml --fleet 5,10,25 --seeds 1-5
+./build/bench_allocation
 ```
 
 Options: `-DFLEET_SANITIZE=ON` (ASan and UBSan), `-DFLEET_WERROR=OFF`.
@@ -129,7 +178,7 @@ fleet_core/        C++17 core, no ROS dependency
     common/        types, config, rng
     world/         grid map, map generator, distance oracle, world model (coordinator belief)
     tasks/         order generator, task manager, station queues, parking
-    allocation/    task allocators
+    allocation/    task allocators, assignment solver, pair features, learned cost model
     planning/      multi-agent planners
     traffic/       motion permits, deadlock handling
     faults/        fault injector (ground truth), fault manager (coordinator)
@@ -139,7 +188,7 @@ fleet_core/        C++17 core, no ROS dependency
     fleet_manager.hpp
     simulation.hpp
     sweep.hpp      fleet sizes x seeds, aggregation, reference check
-  apps/            run_sim, run_sweep
+  apps/            run_sim, run_sweep, bench_allocation, predict_cost
   tests/           GoogleTest suite
 fleet_msgs/        ROS 2 messages
 fleet_ros/         ROS 2 adapter node
@@ -161,7 +210,7 @@ How to contribute: [CONTRIBUTING.md](CONTRIBUTING.md).
 | 0 | Foundation: components, config, RNG, tests, CI | done |
 | 1 | Simulation core | done |
 | 2 | Uncoordinated baseline | done |
-| 3 | Task allocation | |
+| 3 | Task allocation | done |
 | 4 | Lifelong MAPF, PIBT | |
 | 5 | Execution and traffic | |
 | 6 | Faults, fuzz harness | |

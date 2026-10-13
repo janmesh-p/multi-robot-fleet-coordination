@@ -29,7 +29,7 @@ orders:
   service_steps: 2            # dwell at each pickup and dropoff station
 
 allocation:
-  method: nearest             # nearest | hungarian | cost_aware
+  method: nearest             # nearest | hungarian | cost_aware | learned
   congestion_weight: 1.0      # cost_aware only
 
 planning:

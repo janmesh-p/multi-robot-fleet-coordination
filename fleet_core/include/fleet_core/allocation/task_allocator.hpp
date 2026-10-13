@@ -21,8 +21,14 @@ struct AllocationContext {
   std::vector<TaskId> pending{};  // pending tasks, oldest first
 };
 
-// Assigns pending tasks to available robots.
-// Implementations: nearest (Stage 1), hungarian and cost_aware (Stage 3); see allocation.method.
+// Assigns pending tasks to available robots. See allocation.method:
+//   nearest     oldest order first, to the closest available robot (Stage 1 baseline)
+//   hungarian   one minimum-cost matching of every available robot and pending order; the cost
+//               of a pair is the shortest-path distance to the pickup
+//   cost_aware  the same matching, plus a congestion penalty per pair
+//   (allocation.congestion_weight) learned     the same matching, with a trained model's predicted
+//   steps to the pickup as the
+//               cost (allocation.model_file, docs/learning_track.md)
 class TaskAllocator {
  public:
   virtual ~TaskAllocator() = default;
@@ -34,8 +40,8 @@ class TaskAllocator {
   virtual std::vector<Assignment> assign(const AllocationContext& context) = 0;
 };
 
-// Throws std::runtime_error for methods that are not implemented yet.
-std::unique_ptr<TaskAllocator> makeAllocator(const AllocationConfig& config,
-                                             const FeatureToggles& features);
+// The allocator config.allocation.method names. learned loads allocation.model_file and throws
+// ModelError (cost_model.hpp) when the file breaks the format.
+std::unique_ptr<TaskAllocator> makeAllocator(const Config& config);
 
 }  // namespace fleet_core

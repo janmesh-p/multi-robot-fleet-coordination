@@ -146,4 +146,10 @@ void MetricsCollector::writeDeadlocks(const std::vector<Deadlock>& deadlocks) {
   }
 }
 
+void MetricsCollector::writeAssignments(const std::vector<AssignmentRow>& rows) {
+  std::ofstream out = open("assignments.csv");
+  out << assignmentCsvHeader() << '\n';
+  for (const AssignmentRow& row : rows) out << assignmentCsvRow(row) << '\n';
+}
+
 }  // namespace fleet_core

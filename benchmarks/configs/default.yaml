@@ -3,7 +3,8 @@
 # Rules:
 #   - Unknown or duplicate keys are errors, so a typo never silently falls back to a default.
 #   - Missing keys take the values shown here (they match the built-in defaults; a test checks).
-#   - map.file resolves relative to this file. run.output_dir is relative to the working directory.
+#   - map.file and allocation.model_file resolve relative to this file. run.output_dir is relative
+#     to the working directory.
 #   - 1 step = 1 simulated second. Robots move one cell per step.
 
 run:
@@ -26,8 +27,9 @@ orders:
   service_steps: 2            # dwell at each pickup and dropoff station
 
 allocation:
-  method: nearest             # nearest | hungarian | cost_aware
+  method: nearest             # nearest | hungarian | cost_aware | learned
   congestion_weight: 1.0      # cost_aware only
+  # model_file: model.json    # learned only, and required there (docs/learning_track.md)
 
 planning:
   method: independent_astar   # independent_astar | prioritized | windowed_coop_astar | cbs | ecbs | pibt

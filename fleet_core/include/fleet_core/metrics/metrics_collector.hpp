@@ -9,6 +9,7 @@
 #include "fleet_core/common/config.hpp"
 #include "fleet_core/common/types.hpp"
 #include "fleet_core/execution/grid_executor.hpp"
+#include "fleet_core/metrics/assignment_log.hpp"
 #include "fleet_core/metrics/run_stats.hpp"
 #include "fleet_core/verification/invariant_checker.hpp"
 #include "fleet_core/verification/progress_monitor.hpp"
@@ -30,6 +31,8 @@ std::string summaryCsvRow(const RunSummary& summary);
 //   summary.csv     one row: RunSummary
 //   violations.csv  invariant violations, if any
 //   deadlocks.csv   one row per deadlock: formed, broken (empty: never), robots
+//   assignments.csv one row per assignment: the pair's features at decision time and what then
+//                   happened (docs/learning_track.md, section 3)
 // Owned by the runner, not by FleetManager, because it records ground truth.
 class MetricsCollector {
  public:
@@ -43,6 +46,7 @@ class MetricsCollector {
   void writeSummary(const RunSummary& summary);
   void writeViolations(const std::vector<Violation>& violations);
   void writeDeadlocks(const std::vector<Deadlock>& deadlocks);
+  void writeAssignments(const std::vector<AssignmentRow>& rows);
 
   const std::filesystem::path& outDir() const { return out_dir_; }
 

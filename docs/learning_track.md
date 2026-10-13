@@ -4,9 +4,9 @@ This file is the contract between the C++ core and `learning/`. The repo owner m
 change it, open an issue titled `learning: <what you need>`. Read
 [CONTRIBUTING.md](../CONTRIBUTING.md) first.
 
-This is version 1, written before Stage 3. Stage 3 implements sections 3 and 4 exactly as
-written. If the core ever has to differ, this file changes in the same commit, and the commit
-message says what changed.
+This is version 1. Stage 3 implements sections 3 and 4, and core tests check the example row,
+the worked example, and the free-flow replay. If the core ever has to differ, this file changes
+in the same commit, and the commit message says what changed.
 
 ## 1. Goal
 
@@ -17,7 +17,7 @@ robot-order pairs), and differ only in the cost of a pair:
 | Allocator | Cost of a robot-order pair |
 |---|---|
 | `hungarian` | `dist_to_pickup`: shortest-path steps to the pickup, as if no other robot existed |
-| `cost_aware` | `dist_to_pickup` plus a hand-tuned congestion penalty (see `fleet_core/src/allocation/` once Stage 3 lands) |
+| `cost_aware` | `dist_to_pickup + congestion_weight * (robots_in_box + service_steps * pickup_assigned)`, a hand-tuned congestion penalty; plain `dist_to_pickup` when `features.congestion_cost` is off |
 | `learned` | a model's prediction of the steps the robot will really need to reach the pickup, traffic and station queues included |
 
 The learning track builds the `learned` cost: a small regression model trained on logged runs.
@@ -29,7 +29,7 @@ hand-tuned cost? Either answer is a result, and both get reported the same way.
 | Stage | What you get |
 |---|---|
 | 2 (done) | `run_sim` and `run_sweep`, with `nearest` allocation and `independent_astar` planning only. Every run deadlocks within minutes. No per-order log yet. |
-| 3 | Allocators `hungarian`, `cost_aware`, `learned`; config key `allocation.model_file`; `assignments.csv` in every run directory; the `predict_cost` tool. Planning is still `independent_astar`, so runs still deadlock. Use this data to test your plumbing, not to train. |
+| 3 (done) | Allocators `hungarian`, `cost_aware`, `learned`; config key `allocation.model_file`; `assignments.csv` in every run directory; the `predict_cost` tool. Planning is still `independent_astar`, so runs still deadlock. Use this data to test your plumbing, not to train. |
 | 4 | Coordinated planners, including `pibt`. With `pibt` the fleet keeps moving. This is the first data worth training on. |
 | 5, 6 | Traffic rules, then faults. Both change how robots move, so recollect, retrain, and rerun the evaluation after each one lands. |
 
@@ -155,7 +155,8 @@ exactly the same.
    is the matrix-vector product. `weights` has one row per output unit, and each row has one
    entry per input. `relu(v) = max(v, 0)`, `identity(v) = v`.
 3. `y = h[0]`. If `base_feature` is not `null`, add the raw, unscaled `row[base_feature]`.
-4. The cost is `y` clamped to `[0, 100000]`.
+4. The cost is `y` clamped to `[0, 100000]`. A `y` that is not a number, which only an overflow
+   can produce, counts as 100000.
 
 Worked example: for the row `dist_to_pickup = 20`, `robots_in_box = 3`, `pickup_assigned = 1`,
 the model above gives a cost of 21.678284091. Your Python reference should reproduce that.
@@ -194,8 +195,9 @@ Runs the C++ cost on every row of any CSV that has the columns the model reads (
 ./build/predict_cost --model learning/models/cost_model_v1.json --rows path/to/assignments.csv
 ```
 
-It prints a `row,prediction` header, then one line per data row (`row` counts from 0, the
-prediction is printed with `%.17g`). Exit codes: 0 done, 1 bad model or rows, 2 bad arguments.
+It prints a `row,prediction` header, then one line per data row (`row` counts from 0, empty
+lines are skipped, the prediction is printed with `%.17g`). Exit codes: 0 done, 1 bad model or
+rows, 2 bad arguments.
 Python and C++ must agree within `1e-6` on every row.
 
 ### Config (Stage 3)
@@ -512,8 +514,9 @@ Today:
    `learning.yml`. Open the pull request.
 
 Before Stage 3 lands: `dataset.py`, `train.py`, `evaluate.py`, and `collect.py`. `collect.py`
-can already write configs and run sweeps. Until Stage 3, loading must fail with a clear message
-that `assignments.csv` arrives in Stage 3.
+can already write every config, but before Stage 3 only `allocation.method: nearest` runs:
+`hungarian` and `cost_aware` exit 1 with "not implemented yet". Until Stage 3, loading must fail
+with a clear message that `assignments.csv` arrives in Stage 3.
 
 When Stage 3 lands: the real fixture, the `core` CI job, the parity and free-flow tests, and one
 plumbing collection with `independent_astar` on seeds 3000-3004.
