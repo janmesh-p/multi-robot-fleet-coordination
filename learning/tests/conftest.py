@@ -28,3 +28,12 @@ def run_sweep(fleet_build: Path) -> Path:
     if not os.access(path, os.X_OK):
         pytest.fail(f"{path} is missing; build fleet_core first (CONTRIBUTING.md)")
     return path
+
+
+@pytest.fixture
+def predict_cost(fleet_build: Path) -> Path:
+    """The predict_cost tool in the build folder."""
+    path = fleet_build / "predict_cost"
+    if not os.access(path, os.X_OK):
+        pytest.fail(f"{path} is missing; build fleet_core first (CONTRIBUTING.md)")
+    return path

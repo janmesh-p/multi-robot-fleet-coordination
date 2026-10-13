@@ -170,7 +170,8 @@ def predict(model: Mapping[str, Any], rows: pd.DataFrame | Mapping[str, Any]) ->
     """Cost of each row in steps, computed exactly as the C++ `learned` allocator does.
 
     `rows` holds one column per name in `features` (and `base_feature`, if set); other columns
-    are ignored. Returns a float64 array, one cost per row, clamped to [0, 100000].
+    are ignored. Returns a float64 array, one cost per row, clamped to [0, 100000]. A cost that
+    is not a number, which only an overflow can produce, counts as 100000 (section 4).
     """
     needed = list(model["features"])
     if model["base_feature"] is not None:
@@ -179,20 +180,24 @@ def predict(model: Mapping[str, Any], rows: pd.DataFrame | Mapping[str, Any]) ->
     if missing:
         raise ModelError(f"rows: missing columns {', '.join(missing)}")
 
-    x = np.column_stack([np.asarray(rows[name], dtype=np.float64) for name in model["features"]])
-    h = (x - np.asarray(model["mean"], dtype=np.float64)) / np.asarray(
-        model["scale"], dtype=np.float64
-    )
-    for layer in model["layers"]:
-        weights = np.asarray(layer["weights"], dtype=np.float64)
-        bias = np.asarray(layer["bias"], dtype=np.float64)
-        h = h @ weights.T + bias
-        if layer["activation"] == "relu":
-            h = np.maximum(h, 0.0)
-    y = h[:, 0]
-    if model["base_feature"] is not None:
-        y = y + np.asarray(rows[model["base_feature"]], dtype=np.float64)
-    return np.clip(y, COST_MIN, COST_MAX)
+    # Overflow is defined behavior here: inf is clamped and NaN counts as COST_MAX, as in C++.
+    with np.errstate(over="ignore", invalid="ignore"):
+        x = np.column_stack(
+            [np.asarray(rows[name], dtype=np.float64) for name in model["features"]]
+        )
+        h = (x - np.asarray(model["mean"], dtype=np.float64)) / np.asarray(
+            model["scale"], dtype=np.float64
+        )
+        for layer in model["layers"]:
+            weights = np.asarray(layer["weights"], dtype=np.float64)
+            bias = np.asarray(layer["bias"], dtype=np.float64)
+            h = h @ weights.T + bias
+            if layer["activation"] == "relu":
+                h = np.maximum(h, 0.0)  # like std::max(v, 0.0), it keeps a NaN
+        y = h[:, 0]
+        if model["base_feature"] is not None:
+            y = y + np.asarray(rows[model["base_feature"]], dtype=np.float64)
+    return np.clip(np.where(np.isnan(y), COST_MAX, y), COST_MIN, COST_MAX)
 
 
 def main(argv: list[str] | None = None) -> int:
