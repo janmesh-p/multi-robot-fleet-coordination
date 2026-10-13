@@ -278,9 +278,14 @@ def format_seeds(seeds: Iterable[int]) -> str:
     return ", ".join(str(a) if a == b else f"{a}-{b}" for a, b in spans)
 
 
-def _report(
+def report(
     runs: pd.DataFrame, rows: pd.DataFrame, kept: pd.DataFrame, counts: pd.DataFrame, margin: int
 ) -> list[str]:
+    """Lines that describe a loaded table: filter counts, seeds, and what needs attention.
+
+    Takes the outputs of read_runs, read_rows, and apply_filters. Raises ValueError for a seed
+    with no use in section 7.
+    """
     lines: list[str] = []
 
     def add(label: str, text: str) -> None:
@@ -346,7 +351,7 @@ def main(argv: list[str] | None = None) -> int:
         runs = read_runs(args.roots)
         rows = read_rows(runs)
         kept, counts = apply_filters(rows, args.margin)
-        lines = _report(runs, rows, kept, counts, args.margin)
+        lines = report(runs, rows, kept, counts, args.margin)
     except (OSError, ValueError) as error:
         print(f"error: {error}", file=sys.stderr)
         return 1
