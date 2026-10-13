@@ -22,3 +22,25 @@ jobs:
           learning/.venv/bin/ruff format --check learning
       - name: Unit tests
         run: learning/.venv/bin/python -m pytest learning/tests -m "not core"
+
+  core:
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install build dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends ninja-build g++ libyaml-cpp-dev libgtest-dev
+      - name: Build fleet_core
+        run: |
+          cmake -S fleet_core -B build -G Ninja -DCMAKE_BUILD_TYPE=Release -DFLEET_SANITIZE=OFF
+          cmake --build build
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"  # the same version as the python job
+      - name: Install
+        run: |
+          python -m venv learning/.venv
+          learning/.venv/bin/pip install -r learning/requirements.txt -e learning
+      - name: Core tests
+        run: FLEET_BUILD=build learning/.venv/bin/python -m pytest learning/tests -m core
