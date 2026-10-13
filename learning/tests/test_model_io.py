@@ -1,5 +1,6 @@
 import copy
 import json
+import warnings
 from pathlib import Path
 
 import numpy as np
@@ -64,6 +65,30 @@ def test_clamp_at_upper_bound():
     model = model_io.free_flow_model()
     rows = {"dist_to_pickup": [250000]}
     assert model_io.predict(model, rows)[0] == model_io.COST_MAX
+
+
+# x = dist / 1e-300 overflows both hidden units to inf for any dist > 0, so y = inf - inf.
+OVERFLOW = {
+    "format": "fleet_cost_model",
+    "version": 1,
+    "target": "steps_to_pickup",
+    "features": ["dist_to_pickup"],
+    "mean": [0],
+    "scale": [1e-300],
+    "layers": [
+        {"weights": [[1e300], [1e300]], "bias": [0, 0], "activation": "relu"},
+        {"weights": [[1, -1]], "bias": [0], "activation": "identity"},
+    ],
+    "base_feature": None,
+}
+
+
+def test_a_cost_that_is_not_a_number_counts_as_the_maximum():
+    # Section 4: only an overflow can produce NaN, and it counts as 100000. No warnings either.
+    with warnings.catch_warnings():
+        warnings.simplefilter("error")
+        costs = model_io.predict(OVERFLOW, {"dist_to_pickup": [10, 0]})
+    assert costs.tolist() == [model_io.COST_MAX, 0.0]
 
 
 def test_free_flow_equals_dist_to_pickup_on_fixture():
