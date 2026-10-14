@@ -32,9 +32,12 @@ allocation:
   # model_file: model.json    # learned only, and required there (docs/learning_track.md)
 
 planning:
+  # independent_astar ignores the other robots (the baseline). The others are coordinated: they
+  # need features.station_queues and features.parking, and windowed_coop_astar and pibt also
+  # need features.rolling_replanning.
   method: independent_astar   # independent_astar | prioritized | windowed_coop_astar | cbs | ecbs | pibt
-  window: 20                  # windowed planners: conflict-free steps per plan
-  replan_period: 5            # rolling horizon: replan every k steps (k <= window)
+  window: 20                  # rolling replanning: conflict-free steps per plan (prioritized: all)
+  replan_period: 5            # rolling replanning: replan every k steps (k <= window)
   expansion_budget: 200000    # node expansions per planning call; deterministic time limit
   ecbs_suboptimality: 1.2     # ecbs only; cost bound w >= 1
 
@@ -57,7 +60,7 @@ features:                     # one switch per feature, for ablations
   parking: true
   distance_oracle: true       # false: Manhattan distance
   congestion_cost: true       # cost_aware allocation penalizes congested routes
-  rolling_replanning: true
+  rolling_replanning: true    # coordinated: all robots every replan_period steps; off: on goal change
   dependency_graph: true      # execution dependency graph (delay tolerance)
   intersection_reservations: true
   deadlock_recovery: true

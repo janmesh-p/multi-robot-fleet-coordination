@@ -36,7 +36,8 @@ struct RunSummary {
   int64_t planning_calls{0};    // whole run: planning latency is a compute cost, not a
   double planning_p50_ms{0.0};  // steady-state number, so warmup ticks count too
   double planning_p95_ms{0.0};
-  int64_t expansions{0};  // whole run
+  int64_t expansions{0};        // whole run
+  int64_t planner_failures{0};  // whole run: calls that found no plan; not in summary.csv
 
   int64_t violations{0};
   bool aborted{false};
@@ -85,6 +86,7 @@ class RunStats {
   int64_t congestion_steps_{0};
   std::vector<double> planning_ms_{};
   int64_t expansions_{0};
+  int64_t planner_failures_{0};
 };
 
 }  // namespace fleet_core

@@ -1,5 +1,4 @@
 #include <cstdlib>
-#include <stdexcept>
 #include <vector>
 
 #include <gtest/gtest.h>
@@ -113,17 +112,6 @@ TEST(IndependentAStar, TrivialUnreachableAndBudget) {
   EXPECT_FALSE(planOne(world, d, {0, 0}, {0, 5}, 3).success);  // budget too small
   world.applyObservation(CellObservation{0, {{0, 3}}, {}});    // wall in the only corridor
   EXPECT_FALSE(planOne(world, d, {0, 0}, {0, 5}).success);
-}
-
-TEST(PlannerFactory, UnimplementedMethodsThrow) {
-  for (const PlanningMethod m :
-       {PlanningMethod::kPrioritized, PlanningMethod::kWindowedCoopAStar, PlanningMethod::kCbs,
-        PlanningMethod::kEcbs, PlanningMethod::kPibt}) {
-    PlanningConfig config;
-    config.method = m;
-    EXPECT_THROW(makePlanner(config), std::runtime_error);
-  }
-  EXPECT_EQ(makePlanner(PlanningConfig{})->name(), "independent_astar");
 }
 
 }  // namespace

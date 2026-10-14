@@ -65,6 +65,7 @@ void RunStats::recordStep(const StepTruth& step, const TruthSnapshot& after,
   delivered_total_ += static_cast<int64_t>(step.deliveries.size());
   expansions_ += tick.expansions;
   if (tick.planner_called) planning_ms_.push_back(tick.planning_ms);
+  if (tick.planner_failed) ++planner_failures_;
   if (step.t < warmup_) return;
 
   delivered_steady_ += static_cast<int64_t>(step.deliveries.size());
@@ -111,6 +112,7 @@ RunSummary RunStats::summarize(const Config& config, Timestep steps_run, double 
   s.planning_p50_ms = percentile(planning_ms_, 0.50);
   s.planning_p95_ms = percentile(planning_ms_, 0.95);
   s.expansions = expansions_;
+  s.planner_failures = planner_failures_;
   s.violations = violations;
   s.aborted = aborted;
   s.log_hash = hash_;

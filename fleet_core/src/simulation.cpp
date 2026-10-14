@@ -63,9 +63,10 @@ std::vector<Cell> placeFleet(const Config& config, const GridMap& map) {
 Simulation::Simulation(const Config& config) : config_(config), map_(buildMap(config.map)) {
   validateConfig(config_);
 
-  // What this stage can run. Each gap names the stage that fills it.
-  makeAllocator(config_);         // learned: rejects a bad model file now, naming the field
-  makePlanner(config_.planning);  // throws if not implemented
+  // What this stage can run, and what the planner needs. A gap that a later stage fills names
+  // that stage.
+  makeAllocator(config_);  // learned: rejects a bad model file now, naming the field
+  if (const auto gap = planningRequirementGap(config_)) unsupported(*gap);
   if (config_.faults.packet_loss > 0.0) unsupported("faults.packet_loss arrives in Stage 6");
   for (const FaultEvent& e : config_.faults.events) {
     const bool cells = e.type == FaultType::kBlockCells || e.type == FaultType::kUnblockCells;
@@ -95,13 +96,15 @@ Simulation::Simulation(const Config& config) : config_(config), map_(buildMap(co
   if (f.congestion_cost && config_.allocation.method != AllocationMethod::kCostAware) {
     inert.push_back("congestion_cost (cost_aware only)");
   }
-  if (f.rolling_replanning) inert.push_back("rolling_replanning (Stage 4)");
+  if (f.rolling_replanning && !isCoordinated(config_.planning.method)) {
+    inert.push_back("rolling_replanning (coordinated planners only)");
+  }
   if (f.dependency_graph) inert.push_back("dependency_graph (Stage 5)");
   if (f.intersection_reservations) inert.push_back("intersection_reservations (Stage 5)");
   if (f.deadlock_recovery) inert.push_back("deadlock_recovery (Stage 5)");
   if (f.starvation_guard) inert.push_back("starvation_guard (Stage 5)");
   if (!inert.empty()) {
-    std::string text = "toggles on but not active yet:";
+    std::string text = "toggles on but inactive here:";
     for (size_t i = 0; i < inert.size(); ++i) text += (i == 0 ? " " : ", ") + inert[i];
     notes_.push_back(text);
   }
@@ -115,7 +118,7 @@ RunResult Simulation::run(const std::optional<std::filesystem::path>& out_dir) c
                       config_.execution.delay_probability, deriveSeed(seed, rng_stream::kDelays));
   FleetManager fleet(config_, WorldModel(map_, spawn_));
   OrderGenerator orders(map_, config_.orders.arrival_rate, deriveSeed(seed, rng_stream::kOrders));
-  InvariantChecker checker(config_.planning.method != PlanningMethod::kIndependentAStar);
+  InvariantChecker checker(isCoordinated(config_.planning.method));
   ProgressMonitor progress(config_.fleet.size);
   RunStats stats(config_.fleet.size, config_.run.warmup_steps);
   AssignmentLog assignments;

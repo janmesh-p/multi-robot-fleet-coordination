@@ -15,8 +15,11 @@ namespace fleet_core {
 //   - a main aisle inside each lane, aisle rows along the top and bottom
 //   - blocks of shelves ('#') separated by one-cell aisles
 //
-// Every edge between free cells lies on a cycle (no dead ends, no bridges), the graph condition
-// PIBT's reachability guarantee relies on. Throws ConfigError for an invalid layout.
+// Every edge between free cells lies on a cycle: no bridges. Paths still never pass through a
+// station or parking cell, so for planning each parking cell is a dead end, and so is each corner
+// cell whose other neighbors are a station and a parking cell. PIBT's reachability guarantee
+// needs a graph without dead ends, so the pibt planner adds a rule for robots leaving one.
+// Throws ConfigError for an invalid layout.
 GridMap generateWarehouse(const MapGeneratorConfig& layout);
 
 // Edges between static free cells whose removal disconnects the free-cell graph.

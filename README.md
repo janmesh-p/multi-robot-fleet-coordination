@@ -4,12 +4,12 @@ Warehouse multi-agent pickup and delivery (MAPD): task allocation, lifelong mult
 finding, traffic management, and fault recovery for up to 100 robots. Grid simulator for scale,
 Isaac Sim for physics, desk hardware in the loop.
 
-**Status:** Stage 3 (task allocation) done. The optimal matching (Hungarian method) cuts the
-total distance from robots to their pickups by 5 to 11% against greedy nearest-first on the same
-rounds ([numbers](#allocation-stage-3)). Every run still freezes within a few simulated minutes,
-because each robot still plans its own shortest path and ignores the others
-([baseline](#baseline-stage-2)); Stage 4 adds coordinated planners. Every number in this README
-comes from measured runs.
+**Status:** Stage 4 (coordinated planning) done. Where independent planning froze every run
+([baseline](#baseline-stage-2)), four coordinated planners ran 276 simulated hours with up to
+100 robots, without a safety stop or a frozen run ([numbers](#coordinated-planning-stage-4)).
+With 25 robots under heavy load ECBS delivers the most. PIBT plans fastest but delivers up to 22%
+less than windowed cooperative A* on one-cell aisles. CBS stalls when robots meet head-on. Every
+number in this README comes from measured runs.
 
 ## Architecture
 
@@ -34,7 +34,8 @@ comes from measured runs.
   orders. Same seed and config give the same trajectory hash.
 - Robots rest only on endpoints (stations, parking), and paths never pass through one
   (well-formed MAPD), so a parked or servicing robot never blocks traffic.
-- One robot per station at a time; the rest wait their turn on spare parking cells.
+- One robot per station at a time; the rest wait their turn on spare parking cells, or at home
+  when none is free.
 - Robot safety in the simulator stops a robot before contact and records why. With
   coordinated planners every such stop counts as a violation.
 
@@ -133,6 +134,100 @@ target traffic and busy stations, which these traffic-free rounds do not have.
   --rounds 200
 ```
 
+## Coordinated planning (Stage 4)
+
+Every planner gets the robots' cells and goals and returns timed paths: one cell per step, a
+repeated cell is a wait, and a robot holds its last cell when its path ends.
+
+| `planning.method` | How it plans | Looks ahead |
+|---|---|---|
+| `independent_astar` | each robot alone, ignoring the others (the baseline) | to the goal |
+| `prioritized` | one robot at a time, oldest order first, each around the robots planned before it; if one finds no path, start over with it first | to the goal |
+| `windowed_coop_astar` | the same, conflict-free only `window` steps ahead (WHCA*) | `window` steps |
+| `cbs` | Conflict-Based Search: plan each robot alone, then split on the first conflict, forbidding the cell to one robot or the other; least total cost | `window` steps |
+| `ecbs` | bounded-suboptimal CBS: total cost within `ecbs_suboptimality` of the least, preferring plans with fewer conflicts | `window` steps |
+| `pibt` | Priority Inheritance with Backtracking: every robot moves one step at a time; a robot that needs an occupied cell lends its priority to the robot standing there | `window` steps |
+
+- Rolling horizon (`features.rolling_replanning`, on by default): every `replan_period` steps,
+  every robot except those working at a station gets a new plan, conflict-free for the next
+  `window` steps. A robot at its station is an obstacle until its service ends.
+- With it off (`prioritized`, `cbs`, and `ecbs` only): a robot whose goal changed gets a path
+  all the way there, around the plans the others already have.
+- A call that finds no plan within `expansion_budget` keeps every robot on its current plan,
+  which stays conflict-free, and runs again the next step.
+- One low level for all of them: A* over cells and steps (focal search for ECBS), with the
+  distance oracle as the heuristic. No path passes through a station or parking cell.
+- Coordinated planners need station queues and parking, so no two robots share a goal. A robot
+  whose station has no free waiting cell waits at home, because waiting on a station or in an
+  aisle can block the robots it waits for. The baseline still waits where it is, so its
+  reference does not move. Robots that run late (`execution.delay_probability`) need Stage 5.
+- No path passes through parking, so every parking cell is a dead end, and PIBT's guarantee
+  needs a map without one. A robot parked in one whose only exit is held by a robot that wants
+  in would wait forever, so in PIBT the robot at the exit steps aside and the parked one leaves
+  first.
+- With a coordinated planner, every robot-safety stop counts as a violation and stops the run.
+
+`warehouse_small`, optimal matching, one simulated hour per run, seeds 1 to 10. Orders per hour
+in steady state, mean over the seeds. 0.1 orders per step offers 360 orders per hour; 0.2 offers
+720.
+
+| Planner | 0.1/step, 5 robots | 10 robots | 25 robots | 0.2/step, 5 robots | 10 robots | 25 robots |
+|---|---:|---:|---:|---:|---:|---:|
+| `independent_astar` | 0.1 | 0.0 | 0.0 | 0.0 | 0.0 | 0.0 |
+| `pibt` | 177.0 | 299.6 | 356.5 | 176.6 | 299.6 | 472.6 |
+| `windowed_coop_astar` | 189.6 | 346.8 | 359.2 | 189.4 | 357.0 | 609.1 |
+| `prioritized` | 190.2 | 346.8 | 358.7 | 189.7 | 358.7 | 614.6 |
+| `ecbs` | 190.1 | 348.2 | 359.5 | 190.2 | 360.5 | 652.4 |
+| `cbs` | 190.4 | 316.4 | not run | 190.7 | 343.0 | not run |
+
+- `pibt`, `windowed_coop_astar`, `prioritized`, and `ecbs`: 240 runs here and 36 on
+  `warehouse_large` below, with no robot-safety stop, no violation, and no frozen run.
+  `independent_astar` froze all 60 of its runs.
+- At 0.1 orders per step, 25 robots keep up with the 360 orders offered under every coordinated
+  planner. With 5 robots the robots themselves are the limit.
+- PIBT delivers least: 14% below `windowed_coop_astar` at 10 robots and 0.1 orders per step, 22%
+  below at 25 robots and 0.2. In a one-cell aisle the robot that gives way backs up to the next
+  junction and then comes back, where the other planners wait or take another aisle. It is the
+  fastest planner: 0.11 ms per call at p95 with 25 robots and 0.2 orders per step, against
+  0.22 ms for `windowed_coop_astar`, 0.29 ms for `prioritized`, and 2.0 ms for `ecbs`.
+- ECBS delivers most at 25 robots and 0.2 orders per step, ahead of `windowed_coop_astar` in all
+  10 seeds.
+- CBS finds the least total cost in each window, but two robots meeting head-on in a one-cell
+  aisle make it split on the same conflict again and again, one step further each time. At 10
+  robots and 0.1 orders per step, 2,994 of its 9,598 calls ran out of budget, and 2 of the 10
+  runs froze: once every robot has stopped, the same failing call repeats. At 0.2, 1 of 10 runs
+  froze. Not run at 25 robots.
+- Planning times are wall time on one core of the build machine, the mean of each run's p95;
+  every other number depends only on the seed.
+
+`warehouse_large`, 0.5 orders per step (1,800 per hour offered), seeds 1 to 3:
+
+| Planner | 25 robots | 50 robots | 100 robots | Planning p95 at 100 robots |
+|---|---:|---:|---:|---:|
+| `pibt` | 406.4 | 564.8 | 506.4 | 0.42 ms |
+| `windowed_coop_astar` | 450.8 | 667.2 | 581.2 | 0.50 ms |
+| `prioritized` | 457.6 | 676.8 | 574.4 | 1.47 ms |
+| `ecbs` | 447.2 | 671.6 | 551.2 | 7.02 ms |
+
+Every planner delivers less with 100 robots than with 50. The map has 150 parking cells and 100
+are homes, which leaves 50 to wait on near its 20 stations; robots that find none wait at home
+and drive over when their turn comes. Stage 7 measures where the time goes.
+
+What this does not show: robots that run late (Stage 5), lost messages and dead robots
+(Stage 6), and the learned allocator (the learning track).
+
+```bash
+./build/bench_planning --config benchmarks/configs/planning.yaml --fleet 5,10,25 --seeds 1-10
+./build/bench_planning --config benchmarks/configs/planning.yaml --fleet 5,10,25 --seeds 1-10 \
+  --rate 0.2
+./build/bench_planning --config benchmarks/configs/planning.yaml --planners cbs \
+  --fleet 5,10 --seeds 1-10   # and --rate 0.2
+./build/bench_planning --config benchmarks/configs/planning.yaml \
+  --planners independent_astar --fleet 5,10,25 --seeds 1-10   # and --rate 0.2
+./build/bench_planning --config benchmarks/configs/planning.yaml --fleet 25,50,100 \
+  --seeds 1-3 --rate 0.5 --map maps/warehouse_large.txt
+```
+
 ## Build and test (fleet_core)
 
 ```bash
@@ -143,6 +238,7 @@ ctest --test-dir build --output-on-failure
 ./build/run_sim --config benchmarks/configs/default.yaml
 ./build/run_sweep --config benchmarks/configs/baseline.yaml --fleet 5,10,25 --seeds 1-5
 ./build/bench_allocation
+./build/bench_planning --config benchmarks/configs/planning.yaml
 ```
 
 Options: `-DFLEET_SANITIZE=ON` (ASan and UBSan), `-DFLEET_WERROR=OFF`.
@@ -188,7 +284,7 @@ fleet_core/        C++17 core, no ROS dependency
     fleet_manager.hpp
     simulation.hpp
     sweep.hpp      fleet sizes x seeds, aggregation, reference check
-  apps/            run_sim, run_sweep, bench_allocation, predict_cost
+  apps/            run_sim, run_sweep, bench_allocation, bench_planning, predict_cost
   tests/           GoogleTest suite
 fleet_msgs/        ROS 2 messages
 fleet_ros/         ROS 2 adapter node
@@ -211,7 +307,7 @@ How to contribute: [CONTRIBUTING.md](CONTRIBUTING.md).
 | 1 | Simulation core | done |
 | 2 | Uncoordinated baseline | done |
 | 3 | Task allocation | done |
-| 4 | Lifelong MAPF, PIBT | |
+| 4 | Lifelong MAPF, PIBT | done |
 | 5 | Execution and traffic | |
 | 6 | Faults, fuzz harness | |
 | 7 | Benchmarks and evidence | |

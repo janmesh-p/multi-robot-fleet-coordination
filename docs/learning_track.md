@@ -30,7 +30,7 @@ hand-tuned cost? Either answer is a result, and both get reported the same way.
 |---|---|
 | 2 (done) | `run_sim` and `run_sweep`, with `nearest` allocation and `independent_astar` planning only. Every run deadlocks within minutes. No per-order log yet. |
 | 3 (done) | Allocators `hungarian`, `cost_aware`, `learned`; config key `allocation.model_file`; `assignments.csv` in every run directory; the `predict_cost` tool. Planning is still `independent_astar`, so runs still deadlock. Use this data to test your plumbing, not to train. |
-| 4 | Coordinated planners, including `pibt`. With `pibt` the fleet keeps moving. This is the first data worth training on. |
+| 4 (done) | Coordinated planners, including `pibt`. With `pibt` the fleet keeps moving: no frozen run and no safety stop in its 69 runs of the planning benchmark in README.md. One rule changed with them: a robot whose station has no free waiting cell waits at home instead of where it stands. This is the first data worth training on. |
 | 5, 6 | Traffic rules, then faults. Both change how robots move, so recollect, retrain, and rerun the evaluation after each one lands. |
 
 The README Stages table says which stages have landed.

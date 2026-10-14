@@ -18,7 +18,7 @@ namespace fleet_core {
 //
 // Waiting robots park on spare parking cells (parking cells that are nobody's home), nearest to
 // their station first. Like every rest spot they are endpoints off the aisles, so a waiting
-// robot never blocks traffic. With no spare cell left a robot waits where it is.
+// robot never blocks traffic. With no spare cell left a robot waits where the caller says.
 class StationManager {
  public:
   static constexpr size_t kWaitingCellsPerStation = 8;
@@ -36,9 +36,9 @@ class StationManager {
   void release(RobotId robot, const Cell& station);
 
   // Where the robot should go now: the station on its turn, otherwise its waiting cell,
-  // otherwise (every waiting cell taken) where it already is. Throws std::logic_error if the
-  // robot never requested the station.
-  Cell goalFor(RobotId robot, const Cell& station, const Cell& current) const;
+  // otherwise (every waiting cell taken) `fallback`. Throws std::logic_error if the robot never
+  // requested the station.
+  Cell goalFor(RobotId robot, const Cell& station, const Cell& fallback) const;
 
   bool hasTurn(RobotId robot, const Cell& station) const;
   const std::vector<Cell>& waitingCells(const Cell& station) const;  // throws std::out_of_range

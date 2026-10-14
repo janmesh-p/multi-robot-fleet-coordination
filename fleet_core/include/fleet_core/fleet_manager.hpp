@@ -3,6 +3,7 @@
 #include <cstdint>
 #include <memory>
 #include <optional>
+#include <string>
 #include <vector>
 
 #include "fleet_core/allocation/pair_features.hpp"
@@ -46,6 +47,12 @@ struct TickOutput {
   TickStats stats{};
 };
 
+// Why a config cannot run its planner, or nullopt when it can. Coordinated planners need station
+// queues and parking, so that no two robots share a goal and idle robots wait off the aisles;
+// windowed_coop_astar and pibt plan a window ahead, so they need rolling replanning; and robots
+// that run late break conflict-free plans until Stage 5 adds the execution dependency graph.
+std::optional<std::string> planningRequirementGap(const Config& config);
+
 // Central coordinator. Orchestrates the decision components and holds no algorithm itself.
 //
 // Pure input and output: the same instance runs against the grid simulator, Isaac Sim, or
@@ -58,9 +65,16 @@ struct TickOutput {
 //   3. tasks       add new orders; confirm pickups and deliveries from reports
 //   4. allocation  assign pending tasks to robots without one
 //   5. goals       station (on its turn), station waiting cell, or home parking
-//   6. planning    replan every robot whose goal changed; robots already there just hold
+//   6. planning    independent_astar: replan every robot whose goal changed, robots already
+//                  there just hold. Coordinated planners with rolling replanning: every
+//                  planning.replan_period steps, replan every robot not at a station's service,
+//                  planning.window steps ahead (rolling horizon). Without it: replan robots
+//                  whose goal changed, all the way there, around the others' plans.
 //   7. traffic     turn committed plans into motion permits
 //   8. output      one command per robot believed alive
+//
+// A failed coordinated call keeps every committed plan, which stays conflict-free with the
+// others, and tries again next tick.
 class FleetManager {
  public:
   FleetManager(const Config& config, WorldModel world);
@@ -93,6 +107,12 @@ class FleetManager {
   void allocate(Timestep now, TickOutput& output);
   std::vector<Cell> computeGoals();
   void plan(Timestep now, const std::vector<Cell>& goals, TickStats& stats);
+  void planIndependent(Timestep now, const std::vector<Cell>& goals, TickStats& stats);
+  void planRolling(Timestep now, const std::vector<Cell>& goals, TickStats& stats);
+  void planToGoals(Timestep now, const std::vector<Cell>& goals, TickStats& stats);
+  PlanResult runPlanner(Timestep now, const std::vector<PlanAgent>& agents, std::vector<Path> fixed,
+                        int32_t window, TickStats& stats);
+  PlanAgent agent(const RobotBelief& robot, const Cell& goal, Timestep now) const;
   void commit(RobotId robot, const Cell& goal, Path path, bool valid,
               std::vector<CommittedPlan>& committed);
   std::vector<Path> fixedPaths(const std::vector<PlanAgent>& agents) const;
@@ -109,6 +129,7 @@ class FleetManager {
   TrafficManager traffic_;
   FaultManager faults_;
   std::vector<RobotPlan> plans_;  // index == RobotId
+  Timestep next_replan_{0};       // rolling horizon: first step of the next replanning
 };
 
 }  // namespace fleet_core

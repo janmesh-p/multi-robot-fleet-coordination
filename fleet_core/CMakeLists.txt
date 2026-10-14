@@ -9,7 +9,7 @@ else()
 endif()
 
 option(FLEET_CORE_BUILD_TESTS "Build fleet_core unit tests" ${FLEET_CORE_TOP_LEVEL})
-option(FLEET_CORE_BUILD_APPS "Build fleet_core apps (run_sim, run_sweep, predict_cost, bench_allocation)" ${FLEET_CORE_TOP_LEVEL})
+option(FLEET_CORE_BUILD_APPS "Build fleet_core apps (run_sim, run_sweep, predict_cost, bench_allocation, bench_planning)" ${FLEET_CORE_TOP_LEVEL})
 option(FLEET_WERROR "Treat compiler warnings as errors" ON)
 option(FLEET_SANITIZE "Build with AddressSanitizer and UndefinedBehaviorSanitizer" OFF)
 
@@ -55,6 +55,10 @@ add_library(fleet_core
   src/allocation/matching_allocator.cpp
   src/planning/path_planner.cpp
   src/planning/independent_astar.cpp
+  src/planning/space_time.cpp
+  src/planning/prioritized.cpp
+  src/planning/cbs.cpp
+  src/planning/pibt.cpp
   src/traffic/traffic_manager.cpp
   src/faults/fault_injector.cpp
   src/faults/fault_manager.cpp
@@ -76,7 +80,7 @@ set_target_properties(fleet_core PROPERTIES POSITION_INDEPENDENT_CODE ON)
 fleet_configure_target(fleet_core)
 
 if(FLEET_CORE_BUILD_APPS)
-  foreach(app run_sim run_sweep predict_cost bench_allocation)
+  foreach(app run_sim run_sweep predict_cost bench_allocation bench_planning)
     add_executable(${app} apps/${app}.cpp)
     target_link_libraries(${app} PRIVATE fleet_core)
     fleet_configure_target(${app})

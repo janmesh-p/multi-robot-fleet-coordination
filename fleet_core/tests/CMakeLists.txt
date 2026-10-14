@@ -11,6 +11,7 @@ add_executable(fleet_core_tests
   test_task_manager.cpp
   test_station_manager.cpp
   test_allocation_planning.cpp
+  test_planners.cpp
   test_assignment_solver.cpp
   test_pair_features.cpp
   test_cost_model.cpp

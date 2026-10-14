@@ -61,7 +61,7 @@ bool StationManager::hasTurn(RobotId robot, const Cell& station) const {
   return it != queues_.end() && !it->second.empty() && it->second.front() == robot;
 }
 
-Cell StationManager::goalFor(RobotId robot, const Cell& station, const Cell& current) const {
+Cell StationManager::goalFor(RobotId robot, const Cell& station, const Cell& fallback) const {
   if (!enabled_) return station;
   const auto it = queues_.find(station);
   if (it == queues_.end() ||
@@ -71,7 +71,7 @@ Cell StationManager::goalFor(RobotId robot, const Cell& station, const Cell& cur
   }
   if (it->second.front() == robot) return station;
   const auto waiting = waiting_.find(robot);
-  return waiting != waiting_.end() ? waiting->second : current;
+  return waiting != waiting_.end() ? waiting->second : fallback;
 }
 
 const std::vector<Cell>& StationManager::waitingCells(const Cell& station) const {

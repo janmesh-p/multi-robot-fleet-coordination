@@ -49,6 +49,12 @@ jobs:
       - name: Allocation benchmark runs (hungarian never worse than nearest)
         run: ./build/bench_allocation --rounds 200 --out build/bench_allocation.csv
 
+      - name: Coordinated planners run an hour without a violation
+        run: >
+          ./build/bench_planning --config benchmarks/configs/planning.yaml
+          --planners pibt,windowed_coop_astar,prioritized,ecbs,cbs --fleet 10 --seeds 1
+          --out build/bench_planning.csv
+
   format:
     runs-on: ubuntu-22.04
     steps:

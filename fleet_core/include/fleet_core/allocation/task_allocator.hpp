@@ -26,9 +26,9 @@ struct AllocationContext {
 //   hungarian   one minimum-cost matching of every available robot and pending order; the cost
 //               of a pair is the shortest-path distance to the pickup
 //   cost_aware  the same matching, plus a congestion penalty per pair
-//   (allocation.congestion_weight) learned     the same matching, with a trained model's predicted
-//   steps to the pickup as the
-//               cost (allocation.model_file, docs/learning_track.md)
+//               (allocation.congestion_weight)
+//   learned     the same matching, with a trained model's predicted steps to the pickup as
+//               the cost (allocation.model_file, docs/learning_track.md)
 class TaskAllocator {
  public:
   virtual ~TaskAllocator() = default;
