@@ -1,0 +1,1141 @@
+{
+  "name": "cost_model_v1",
+  "command": "python -m fleet_learning.train --data learning/data/430e08a9cd77 --name cost_model_v1 --margin 900",
+  "data": {
+    "dir": "learning/data/430e08a9cd77",
+    "commit": "430e08a9cd77",
+    "runs": 1080,
+    "aborted_runs": [],
+    "margin_steps": 900,
+    "filters": [
+      {
+        "allocator": "cost_aware",
+        "fleet_size": 5,
+        "rows": 21369,
+        "aborted": 0,
+        "margin": 5320,
+        "unreached": 0,
+        "kept": 16049,
+        "unreached_share": 0.0
+      },
+      {
+        "allocator": "cost_aware",
+        "fleet_size": 10,
+        "rows": 32186,
+        "aborted": 0,
+        "margin": 7889,
+        "unreached": 0,
+        "kept": 24297,
+        "unreached_share": 0.0
+      },
+      {
+        "allocator": "cost_aware",
+        "fleet_size": 25,
+        "rows": 41970,
+        "aborted": 0,
+        "margin": 10212,
+        "unreached": 0,
+        "kept": 31758,
+        "unreached_share": 0.0
+      },
+      {
+        "allocator": "hungarian",
+        "fleet_size": 5,
+        "rows": 21203,
+        "aborted": 0,
+        "margin": 5229,
+        "unreached": 0,
+        "kept": 15974,
+        "unreached_share": 0.0
+      },
+      {
+        "allocator": "hungarian",
+        "fleet_size": 10,
+        "rows": 31705,
+        "aborted": 0,
+        "margin": 7790,
+        "unreached": 0,
+        "kept": 23915,
+        "unreached_share": 0.0
+      },
+      {
+        "allocator": "hungarian",
+        "fleet_size": 25,
+        "rows": 41394,
+        "aborted": 0,
+        "margin": 10072,
+        "unreached": 0,
+        "kept": 31322,
+        "unreached_share": 0.0
+      },
+      {
+        "allocator": "nearest",
+        "fleet_size": 5,
+        "rows": 20988,
+        "aborted": 0,
+        "margin": 5222,
+        "unreached": 0,
+        "kept": 15766,
+        "unreached_share": 0.0
+      },
+      {
+        "allocator": "nearest",
+        "fleet_size": 10,
+        "rows": 31808,
+        "aborted": 0,
+        "margin": 7758,
+        "unreached": 0,
+        "kept": 24050,
+        "unreached_share": 0.0
+      },
+      {
+        "allocator": "nearest",
+        "fleet_size": 25,
+        "rows": 41405,
+        "aborted": 0,
+        "margin": 10082,
+        "unreached": 0,
+        "kept": 31323,
+        "unreached_share": 0.0
+      }
+    ],
+    "longest_kept_steps_to_pickup": 446,
+    "seeds": {
+      "train": [
+        1000,
+        1001,
+        1002,
+        1003,
+        1004,
+        1005,
+        1006,
+        1007,
+        1008,
+        1009,
+        1010,
+        1011,
+        1012,
+        1013,
+        1014,
+        1015,
+        1016,
+        1017,
+        1018,
+        1019
+      ],
+      "validation": [
+        1020,
+        1021,
+        1022,
+        1023,
+        1024,
+        1025,
+        1026,
+        1027,
+        1028,
+        1029
+      ],
+      "test": [
+        1030,
+        1031,
+        1032,
+        1033,
+        1034,
+        1035,
+        1036,
+        1037,
+        1038,
+        1039
+      ]
+    },
+    "rows": {
+      "train": 106334,
+      "validation": 53595,
+      "test": 54525
+    }
+  },
+  "features": [
+    "dist_to_pickup",
+    "manhattan_to_pickup",
+    "dist_pickup_to_dropoff",
+    "robot_row",
+    "robot_col",
+    "pickup_row",
+    "pickup_col",
+    "robot_on_endpoint",
+    "robots_near_robot",
+    "robots_near_pickup",
+    "robots_in_box",
+    "box_free_cells",
+    "pickup_assigned",
+    "pickup_pending",
+    "pending_orders",
+    "available_robots",
+    "busy_robots",
+    "alive_robots",
+    "order_age"
+  ],
+  "targets": [
+    "direct",
+    "excess"
+  ],
+  "hidden_sizes": [
+    [
+      32
+    ],
+    [
+      64,
+      64
+    ],
+    [
+      64,
+      64,
+      64
+    ]
+  ],
+  "random_seed": 0,
+  "selection": {
+    "metric": "mae",
+    "split": "validation",
+    "export": "best"
+  },
+  "candidates": [
+    {
+      "name": "free_flow",
+      "family": "free_flow",
+      "target": "excess",
+      "params": {},
+      "validation": {
+        "rows": 53595,
+        "mae": 20.5740647448456,
+        "rmse": 36.03550844936445,
+        "bias": -20.5740647448456,
+        "delayed": {
+          "rows": 49125,
+          "mae": 22.4461475826972,
+          "rmse": 37.639297584390576,
+          "bias": -22.4461475826972
+        }
+      }
+    },
+    {
+      "name": "linear_direct",
+      "family": "linear",
+      "target": "direct",
+      "params": {},
+      "validation": {
+        "rows": 53595,
+        "mae": 10.377583712647196,
+        "rmse": 15.414091537343223,
+        "bias": 0.294600463978374,
+        "delayed": {
+          "rows": 49125,
+          "mae": 10.865293906420824,
+          "rmse": 15.92402730322485,
+          "bias": -0.010449963188081425
+        }
+      }
+    },
+    {
+      "name": "linear_excess",
+      "family": "linear",
+      "target": "excess",
+      "params": {},
+      "validation": {
+        "rows": 53595,
+        "mae": 10.377583712647201,
+        "rmse": 15.414091537343225,
+        "bias": 0.29460046397836825,
+        "delayed": {
+          "rows": 49125,
+          "mae": 10.86529390642083,
+          "rmse": 15.924027303224852,
+          "bias": -0.010449963188085703
+        }
+      }
+    },
+    {
+      "name": "mlp_direct_32",
+      "family": "mlp",
+      "target": "direct",
+      "params": {
+        "hidden_layer_sizes": [
+          32
+        ],
+        "random_state": 0,
+        "activation": "relu",
+        "solver": "adam",
+        "alpha": 0.0001,
+        "batch_size": 200,
+        "learning_rate_init": 0.001,
+        "max_iter": 200,
+        "tol": 0.0001,
+        "n_iter_no_change": 10,
+        "early_stopping": false,
+        "n_iter": 42
+      },
+      "validation": {
+        "rows": 53595,
+        "mae": 8.642394175673541,
+        "rmse": 13.61422698897912,
+        "bias": -0.3367119220629068,
+        "delayed": {
+          "rows": 49125,
+          "mae": 8.969500748496692,
+          "rmse": 14.076060135194433,
+          "bias": -0.820139029309965
+        }
+      }
+    },
+    {
+      "name": "mlp_direct_64x64",
+      "family": "mlp",
+      "target": "direct",
+      "params": {
+        "hidden_layer_sizes": [
+          64,
+          64
+        ],
+        "random_state": 0,
+        "activation": "relu",
+        "solver": "adam",
+        "alpha": 0.0001,
+        "batch_size": 200,
+        "learning_rate_init": 0.001,
+        "max_iter": 200,
+        "tol": 0.0001,
+        "n_iter_no_change": 10,
+        "early_stopping": false,
+        "n_iter": 108
+      },
+      "validation": {
+        "rows": 53595,
+        "mae": 8.856890703726672,
+        "rmse": 13.929269454062247,
+        "bias": 0.013151438249263951,
+        "delayed": {
+          "rows": 49125,
+          "mae": 9.234856261562376,
+          "rmse": 14.419335861670945,
+          "bias": -0.4063744587518468
+        }
+      }
+    },
+    {
+      "name": "mlp_direct_64x64x64",
+      "family": "mlp",
+      "target": "direct",
+      "params": {
+        "hidden_layer_sizes": [
+          64,
+          64,
+          64
+        ],
+        "random_state": 0,
+        "activation": "relu",
+        "solver": "adam",
+        "alpha": 0.0001,
+        "batch_size": 200,
+        "learning_rate_init": 0.001,
+        "max_iter": 200,
+        "tol": 0.0001,
+        "n_iter_no_change": 10,
+        "early_stopping": false,
+        "n_iter": 172
+      },
+      "validation": {
+        "rows": 53595,
+        "mae": 9.315506159572925,
+        "rmse": 14.82230196739586,
+        "bias": 0.4070778259450918,
+        "delayed": {
+          "rows": 49125,
+          "mae": 9.701479684945923,
+          "rmse": 15.339471290535808,
+          "bias": -0.009666138918244579
+        }
+      }
+    },
+    {
+      "name": "mlp_excess_32",
+      "family": "mlp",
+      "target": "excess",
+      "params": {
+        "hidden_layer_sizes": [
+          32
+        ],
+        "random_state": 0,
+        "activation": "relu",
+        "solver": "adam",
+        "alpha": 0.0001,
+        "batch_size": 200,
+        "learning_rate_init": 0.001,
+        "max_iter": 200,
+        "tol": 0.0001,
+        "n_iter_no_change": 10,
+        "early_stopping": false,
+        "n_iter": 48
+      },
+      "validation": {
+        "rows": 53595,
+        "mae": 8.656882498935483,
+        "rmse": 13.600802788153496,
+        "bias": -0.4021708266982338,
+        "delayed": {
+          "rows": 49125,
+          "mae": 9.046165257686468,
+          "rmse": 14.088181392290728,
+          "bias": -0.8211633892726609
+        }
+      }
+    },
+    {
+      "name": "mlp_excess_64x64",
+      "family": "mlp",
+      "target": "excess",
+      "params": {
+        "hidden_layer_sizes": [
+          64,
+          64
+        ],
+        "random_state": 0,
+        "activation": "relu",
+        "solver": "adam",
+        "alpha": 0.0001,
+        "batch_size": 200,
+        "learning_rate_init": 0.001,
+        "max_iter": 200,
+        "tol": 0.0001,
+        "n_iter_no_change": 10,
+        "early_stopping": false,
+        "n_iter": 156
+      },
+      "validation": {
+        "rows": 53595,
+        "mae": 8.782103544279282,
+        "rmse": 13.954115070774165,
+        "bias": -0.2216876239199422,
+        "delayed": {
+          "rows": 49125,
+          "mae": 9.208368063545144,
+          "rmse": 14.466179134693684,
+          "bias": -0.5947512368933767
+        }
+      }
+    },
+    {
+      "name": "mlp_excess_64x64x64",
+      "family": "mlp",
+      "target": "excess",
+      "params": {
+        "hidden_layer_sizes": [
+          64,
+          64,
+          64
+        ],
+        "random_state": 0,
+        "activation": "relu",
+        "solver": "adam",
+        "alpha": 0.0001,
+        "batch_size": 200,
+        "learning_rate_init": 0.001,
+        "max_iter": 200,
+        "tol": 0.0001,
+        "n_iter_no_change": 10,
+        "early_stopping": false,
+        "n_iter": 200
+      },
+      "validation": {
+        "rows": 53595,
+        "mae": 9.489687984956051,
+        "rmse": 15.14690204917618,
+        "bias": -0.10637925773092657,
+        "delayed": {
+          "rows": 49125,
+          "mae": 9.84269670128585,
+          "rmse": 15.658657505493101,
+          "bias": -0.6197284273830891
+        }
+      }
+    },
+    {
+      "name": "gbdt_direct",
+      "family": "gbdt",
+      "target": "direct",
+      "params": {
+        "random_state": 0,
+        "learning_rate": 0.1,
+        "max_iter": 200,
+        "max_leaf_nodes": 31,
+        "min_samples_leaf": 20,
+        "early_stopping": true,
+        "validation_fraction": 0.1,
+        "n_iter_no_change": 10,
+        "n_iter": 111
+      },
+      "validation": {
+        "rows": 53595,
+        "mae": 8.641718296377322,
+        "rmse": 13.561144353906425,
+        "bias": 0.006919766863527181,
+        "delayed": {
+          "rows": 49125,
+          "mae": 8.982198515456892,
+          "rmse": 14.032905185773345,
+          "bias": -0.4381783892297051
+        }
+      }
+    },
+    {
+      "name": "gbdt_excess",
+      "family": "gbdt",
+      "target": "excess",
+      "params": {
+        "random_state": 0,
+        "learning_rate": 0.1,
+        "max_iter": 200,
+        "max_leaf_nodes": 31,
+        "min_samples_leaf": 20,
+        "early_stopping": true,
+        "validation_fraction": 0.1,
+        "n_iter_no_change": 10,
+        "n_iter": 200
+      },
+      "validation": {
+        "rows": 53595,
+        "mae": 8.638161686560156,
+        "rmse": 13.606361380064161,
+        "bias": -0.009290595581458451,
+        "delayed": {
+          "rows": 49125,
+          "mae": 8.980177416372202,
+          "rmse": 14.084759217410376,
+          "bias": -0.4541270123581764
+        }
+      }
+    }
+  ],
+  "models": {
+    "free_flow": {
+      "candidate": "free_flow",
+      "deployable": true,
+      "validation": {
+        "rows": 53595,
+        "mae": 20.5740647448456,
+        "rmse": 36.03550844936445,
+        "bias": -20.5740647448456,
+        "delayed": {
+          "rows": 49125,
+          "mae": 22.4461475826972,
+          "rmse": 37.639297584390576,
+          "bias": -22.4461475826972
+        },
+        "mae_by": {
+          "fleet_size": {
+            "5": {
+              "rows": 11910,
+              "mae": 7.028295549958019
+            },
+            "10": {
+              "rows": 18058,
+              "mae": 13.717576697308672
+            },
+            "25": {
+              "rows": 23627,
+              "mae": 32.64265459008761
+            }
+          },
+          "arrival_rate": {
+            "0.05": {
+              "rows": 11959,
+              "mae": 4.482230955765532
+            },
+            "0.1": {
+              "rows": 19354,
+              "mae": 13.141986152733285
+            },
+            "0.2": {
+              "rows": 22282,
+              "mae": 35.66618795440266
+            }
+          },
+          "allocator": {
+            "cost_aware": {
+              "rows": 18007,
+              "mae": 18.843949575165215
+            },
+            "hungarian": {
+              "rows": 17821,
+              "mae": 21.30559452331519
+            },
+            "nearest": {
+              "rows": 17767,
+              "mae": 21.593797489728146
+            }
+          },
+          "dist_bucket": {
+            "0-5": {
+              "rows": 1731,
+              "mae": 5.112651646447141
+            },
+            "6-10": {
+              "rows": 4518,
+              "mae": 5.940903054448871
+            },
+            "11-20": {
+              "rows": 9899,
+              "mae": 8.336801697141125
+            },
+            "21+": {
+              "rows": 37447,
+              "mae": 26.28915533954656
+            }
+          }
+        }
+      },
+      "test": {
+        "rows": 54525,
+        "mae": 20.755139844108207,
+        "rmse": 36.03595840307882,
+        "bias": -20.755139844108207,
+        "delayed": {
+          "rows": 49934,
+          "mae": 22.66339568230064,
+          "rmse": 37.65613442039055,
+          "bias": -22.66339568230064
+        },
+        "mae_by": {
+          "fleet_size": {
+            "5": {
+              "rows": 12011,
+              "mae": 7.414703188743652
+            },
+            "10": {
+              "rows": 18274,
+              "mae": 13.890117106271205
+            },
+            "25": {
+              "rows": 24240,
+              "mae": 32.54075907590759
+            }
+          },
+          "arrival_rate": {
+            "0.05": {
+              "rows": 12537,
+              "mae": 5.233947515354551
+            },
+            "0.1": {
+              "rows": 19648,
+              "mae": 13.542701547231271
+            },
+            "0.2": {
+              "rows": 22340,
+              "mae": 35.80881826320501
+            }
+          },
+          "allocator": {
+            "cost_aware": {
+              "rows": 18339,
+              "mae": 19.35983423305524
+            },
+            "hungarian": {
+              "rows": 18093,
+              "mae": 21.79439562261648
+            },
+            "nearest": {
+              "rows": 18093,
+              "mae": 21.130160835682307
+            }
+          },
+          "dist_bucket": {
+            "0-5": {
+              "rows": 1525,
+              "mae": 4.633442622950819
+            },
+            "6-10": {
+              "rows": 4545,
+              "mae": 5.814741474147414
+            },
+            "11-20": {
+              "rows": 9917,
+              "mae": 8.082787133205606
+            },
+            "21+": {
+              "rows": 38538,
+              "mae": 26.41608282733925
+            }
+          }
+        }
+      }
+    },
+    "linear": {
+      "candidate": "linear_direct",
+      "deployable": true,
+      "validation": {
+        "rows": 53595,
+        "mae": 10.377583712647196,
+        "rmse": 15.414091537343223,
+        "bias": 0.294600463978374,
+        "delayed": {
+          "rows": 49125,
+          "mae": 10.865293906420824,
+          "rmse": 15.92402730322485,
+          "bias": -0.010449963188081425
+        },
+        "mae_by": {
+          "fleet_size": {
+            "5": {
+              "rows": 11910,
+              "mae": 7.049224085061927
+            },
+            "10": {
+              "rows": 18058,
+              "mae": 9.62728811787401
+            },
+            "25": {
+              "rows": 23627,
+              "mae": 12.628804816255565
+            }
+          },
+          "arrival_rate": {
+            "0.05": {
+              "rows": 11959,
+              "mae": 5.512612488027502
+            },
+            "0.1": {
+              "rows": 19354,
+              "mae": 9.483340729169582
+            },
+            "0.2": {
+              "rows": 22282,
+              "mae": 13.765402112137942
+            }
+          },
+          "allocator": {
+            "cost_aware": {
+              "rows": 18007,
+              "mae": 9.793871768305797
+            },
+            "hungarian": {
+              "rows": 17821,
+              "mae": 10.731107803142283
+            },
+            "nearest": {
+              "rows": 17767,
+              "mae": 10.614581977128688
+            }
+          },
+          "dist_bucket": {
+            "0-5": {
+              "rows": 1731,
+              "mae": 3.831174146696657
+            },
+            "6-10": {
+              "rows": 4518,
+              "mae": 5.188662336222655
+            },
+            "11-20": {
+              "rows": 9899,
+              "mae": 7.365145299117404
+            },
+            "21+": {
+              "rows": 37447,
+              "mae": 12.102568613784216
+            }
+          }
+        }
+      },
+      "test": {
+        "rows": 54525,
+        "mae": 10.573006845986054,
+        "rmse": 15.627650670240053,
+        "bias": 0.41561805488403303,
+        "delayed": {
+          "rows": 49934,
+          "mae": 11.072354429818963,
+          "rmse": 16.14431149636792,
+          "bias": 0.09927464647984566
+        },
+        "mae_by": {
+          "fleet_size": {
+            "5": {
+              "rows": 12011,
+              "mae": 7.249768707236373
+            },
+            "10": {
+              "rows": 18274,
+              "mae": 9.937370685383696
+            },
+            "25": {
+              "rows": 24240,
+              "mae": 12.698874357676234
+            }
+          },
+          "arrival_rate": {
+            "0.05": {
+              "rows": 12537,
+              "mae": 5.898161163575657
+            },
+            "0.1": {
+              "rows": 19648,
+              "mae": 9.711401332882815
+            },
+            "0.2": {
+              "rows": 22340,
+              "mae": 13.954267608825425
+            }
+          },
+          "allocator": {
+            "cost_aware": {
+              "rows": 18339,
+              "mae": 10.054168241837884
+            },
+            "hungarian": {
+              "rows": 18093,
+              "mae": 10.993737127546854
+            },
+            "nearest": {
+              "rows": 18093,
+              "mae": 10.678169515371657
+            }
+          },
+          "dist_bucket": {
+            "0-5": {
+              "rows": 1525,
+              "mae": 3.371898354148418
+            },
+            "6-10": {
+              "rows": 4545,
+              "mae": 4.9705853603838905
+            },
+            "11-20": {
+              "rows": 9917,
+              "mae": 7.255589771451003
+            },
+            "21+": {
+              "rows": 38538,
+              "mae": 12.372361281355774
+            }
+          }
+        }
+      }
+    },
+    "mlp": {
+      "candidate": "mlp_direct_32",
+      "deployable": true,
+      "validation": {
+        "rows": 53595,
+        "mae": 8.642394175673541,
+        "rmse": 13.61422698897912,
+        "bias": -0.3367119220629068,
+        "delayed": {
+          "rows": 49125,
+          "mae": 8.969500748496692,
+          "rmse": 14.076060135194433,
+          "bias": -0.820139029309965
+        },
+        "mae_by": {
+          "fleet_size": {
+            "5": {
+              "rows": 11910,
+              "mae": 4.805301238816245
+            },
+            "10": {
+              "rows": 18058,
+              "mae": 8.134675034896523
+            },
+            "25": {
+              "rows": 23627,
+              "mae": 10.96465976682442
+            }
+          },
+          "arrival_rate": {
+            "0.05": {
+              "rows": 11959,
+              "mae": 3.445287576066072
+            },
+            "0.1": {
+              "rows": 19354,
+              "mae": 7.669638231563295
+            },
+            "0.2": {
+              "rows": 22282,
+              "mae": 12.276669212340602
+            }
+          },
+          "allocator": {
+            "cost_aware": {
+              "rows": 18007,
+              "mae": 8.390052001920564
+            },
+            "hungarian": {
+              "rows": 17821,
+              "mae": 8.732765205464212
+            },
+            "nearest": {
+              "rows": 17767,
+              "mae": 8.807499336976536
+            }
+          },
+          "dist_bucket": {
+            "0-5": {
+              "rows": 1731,
+              "mae": 3.49991724887519
+            },
+            "6-10": {
+              "rows": 4518,
+              "mae": 3.9497481792225835
+            },
+            "11-20": {
+              "rows": 9899,
+              "mae": 4.926341020576913
+            },
+            "21+": {
+              "rows": 37447,
+              "mae": 10.428604348839746
+            }
+          }
+        }
+      },
+      "test": {
+        "rows": 54525,
+        "mae": 8.861298997902118,
+        "rmse": 13.787858004615993,
+        "bias": -0.3014222175518564,
+        "delayed": {
+          "rows": 49934,
+          "mae": 9.19034867435378,
+          "rmse": 14.252110783859253,
+          "bias": -0.8099846768427904
+        },
+        "mae_by": {
+          "fleet_size": {
+            "5": {
+              "rows": 12011,
+              "mae": 5.092779506062937
+            },
+            "10": {
+              "rows": 18274,
+              "mae": 8.397983579834959
+            },
+            "25": {
+              "rows": 24240,
+              "mae": 11.077896092218937
+            }
+          },
+          "arrival_rate": {
+            "0.05": {
+              "rows": 12537,
+              "mae": 3.933355047207032
+            },
+            "0.1": {
+              "rows": 19648,
+              "mae": 7.936292924298365
+            },
+            "0.2": {
+              "rows": 22340,
+              "mae": 12.440356860213257
+            }
+          },
+          "allocator": {
+            "cost_aware": {
+              "rows": 18339,
+              "mae": 8.661250724961478
+            },
+            "hungarian": {
+              "rows": 18093,
+              "mae": 9.009334742892191
+            },
+            "nearest": {
+              "rows": 18093,
+              "mae": 8.916031465892667
+            }
+          },
+          "dist_bucket": {
+            "0-5": {
+              "rows": 1525,
+              "mae": 3.1814530862043973
+            },
+            "6-10": {
+              "rows": 4545,
+              "mae": 3.926339125223548
+            },
+            "11-20": {
+              "rows": 9917,
+              "mae": 4.926268535451097
+            },
+            "21+": {
+              "rows": 38538,
+              "mae": 10.680668314752756
+            }
+          }
+        }
+      }
+    },
+    "gbdt": {
+      "candidate": "gbdt_excess",
+      "deployable": false,
+      "validation": {
+        "rows": 53595,
+        "mae": 8.638161686560156,
+        "rmse": 13.606361380064161,
+        "bias": -0.009290595581458451,
+        "delayed": {
+          "rows": 49125,
+          "mae": 8.980177416372202,
+          "rmse": 14.084759217410376,
+          "bias": -0.4541270123581764
+        },
+        "mae_by": {
+          "fleet_size": {
+            "5": {
+              "rows": 11910,
+              "mae": 4.99126692121661
+            },
+            "10": {
+              "rows": 18058,
+              "mae": 8.086199141493536
+            },
+            "25": {
+              "rows": 23627,
+              "mae": 10.898366380091058
+            }
+          },
+          "arrival_rate": {
+            "0.05": {
+              "rows": 11959,
+              "mae": 3.279420152664045
+            },
+            "0.1": {
+              "rows": 19354,
+              "mae": 7.582078271039796
+            },
+            "0.2": {
+              "rows": 22282,
+              "mae": 12.431565708992816
+            }
+          },
+          "allocator": {
+            "cost_aware": {
+              "rows": 18007,
+              "mae": 8.406072949067202
+            },
+            "hungarian": {
+              "rows": 17821,
+              "mae": 8.800790922482214
+            },
+            "nearest": {
+              "rows": 17767,
+              "mae": 8.710262000775758
+            }
+          },
+          "dist_bucket": {
+            "0-5": {
+              "rows": 1731,
+              "mae": 3.11182820486975
+            },
+            "6-10": {
+              "rows": 4518,
+              "mae": 3.784930172240873
+            },
+            "11-20": {
+              "rows": 9899,
+              "mae": 4.700036823658212
+            },
+            "21+": {
+              "rows": 37447,
+              "mae": 10.520194459716002
+            }
+          }
+        }
+      },
+      "test": {
+        "rows": 54525,
+        "mae": 8.881244615895302,
+        "rmse": 13.860332470857841,
+        "bias": 0.010087243230923975,
+        "delayed": {
+          "rows": 49934,
+          "mae": 9.228036079654084,
+          "rmse": 14.34341015378638,
+          "bias": -0.45874758967994195
+        },
+        "mae_by": {
+          "fleet_size": {
+            "5": {
+              "rows": 12011,
+              "mae": 5.266608100259049
+            },
+            "10": {
+              "rows": 18274,
+              "mae": 8.359451580169836
+            },
+            "25": {
+              "rows": 24240,
+              "mae": 11.065677170522125
+            }
+          },
+          "arrival_rate": {
+            "0.05": {
+              "rows": 12537,
+              "mae": 3.8133550999742667
+            },
+            "0.1": {
+              "rows": 19648,
+              "mae": 7.87611204474781
+            },
+            "0.2": {
+              "rows": 22340,
+              "mae": 12.609309773415802
+            }
+          },
+          "allocator": {
+            "cost_aware": {
+              "rows": 18339,
+              "mae": 8.70713500117597
+            },
+            "hungarian": {
+              "rows": 18093,
+              "mae": 9.114535339088004
+            },
+            "nearest": {
+              "rows": 18093,
+              "mae": 8.824430774609295
+            }
+          },
+          "dist_bucket": {
+            "0-5": {
+              "rows": 1525,
+              "mae": 2.9216944261241373
+            },
+            "6-10": {
+              "rows": 4545,
+              "mae": 3.836216235722796
+            },
+            "11-20": {
+              "rows": 9917,
+              "mae": 4.681075420563067
+            },
+            "21+": {
+              "rows": 38538,
+              "mae": 10.792891456348746
+            }
+          }
+        }
+      }
+    }
+  },
+  "exported": {
+    "family": "mlp",
+    "candidate": "mlp_direct_32",
+    "file": "cost_model_v1.json",
+    "sha256": "39b217939bf030f6d10a8ea1da2407480096777178639bec7acef64c54a3fa86",
+    "max_abs_difference": 1.1368683772161603e-13
+  },
+  "versions": {
+    "python": "3.12.3",
+    "numpy": "2.5.4",
+    "pandas": "3.0.6",
+    "scikit-learn": "1.9.1"
+  }
+}
