@@ -49,7 +49,7 @@ for fleet in numbers(args["--fleet"]):
         for file in ("assignments.csv", "config.yaml"):
             shutil.copy(FIXTURE / file, run_dir / file)
         (run_dir / "positions.csv").write_text("x\\n")
-        summary.assign(run=run, fleet_size=fleet, seed=seed).to_csv(
+        summary.assign(run=run, allocator=allocation["method"], fleet_size=fleet, seed=seed).to_csv(
             run_dir / "summary.csv", index=False
         )
         rows.append({
@@ -320,3 +320,17 @@ def test_a_phase_runs_once_per_commit(tmp_path, fake_run_sweep, models):
 def test_report_needs_a_finished_phase(tmp_path):
     with pytest.raises(closed_loop.ClosedLoopError, match="did not finish"):
         closed_loop.report(tmp_path, REPO)
+
+
+def test_order_ages_summarize_every_assignment(tmp_path, fake_run_sweep, models):
+    cells = closed_loop.final_cells(1.0, models[0], (0.2,))
+    manifest = run(tmp_path, "final", cells, fake_run_sweep, fleet=(5,))
+    folder = phase_dir(tmp_path, manifest)
+    ages = closed_loop.order_ages(folder, manifest)
+    fixture = pd.read_csv(FIXTURE / "assignments.csv")["order_age"]
+    assert list(ages["allocator"]) == ["hungarian", "cost_aware", "learned"]
+    assert list(ages["assignments"]) == [2 * len(fixture)] * 3
+    assert ages.loc[0, "median"] == fixture.median()
+    assert ages.loc[0, "max"] == fixture.max()
+    assert ages.loc[0, "p90"] == pytest.approx(np.percentile(np.tile(fixture, 2), 90))
+    assert "order_age at assignment" in closed_loop.report(folder, REPO)

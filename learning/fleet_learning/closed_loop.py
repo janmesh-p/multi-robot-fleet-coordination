@@ -567,9 +567,13 @@ def tuning_report(results: pd.DataFrame, manifest: Mapping[str, Any]) -> str:
 
 
 def final_report(
-    results: pd.DataFrame, manifest: Mapping[str, Any], bias: Mapping[str, Any] | None
+    results: pd.DataFrame,
+    manifest: Mapping[str, Any],
+    bias: Mapping[str, Any] | None,
+    ages: pd.DataFrame | None = None,
 ) -> str:
-    """Markdown: the final table, the paired differences, the criterion, and the bias check."""
+    """Markdown: the final table, the paired differences, the criterion, the bias check, and
+    the order ages at assignment."""
     lines = [_seeds_line(manifest), f"cost_aware weight {manifest.get('weight')}.", ""]
     header = ["Robots", "Rate", "Allocator", "Runs", "Orders/h mean", "Orders/h median"]
     header += ["Completion mean", "Completion p95", "Deadlocked", "Frozen", "Wall s"]
@@ -637,17 +641,56 @@ def final_report(
             body.append([f"  {cell}", str(m["rows"]), _number(m["mae"]), _number(m["bias"])])
         lines += _table(["Rows from", "Rows", "MAE", "Bias"], body)
         lines += ["", "MAE and bias in steps; bias is predicted minus observed steps_to_pickup."]
+    if ages is not None:
+        lines += ["", "order_age at assignment, in steps, over every assignment of the runs:", ""]
+        body = [
+            [
+                str(r["fleet_size"]),
+                f"{r['arrival_rate']:g}",
+                r["allocator"],
+                str(r["assignments"]),
+                _number(r["median"], 0),
+                _number(r["p90"], 0),
+                str(r["max"]),
+            ]
+            for r in ages.to_dict("records")
+        ]
+        header = ["Robots", "Rate", "Allocator", "Assignments", "Median", "p90", "Max"]
+        lines += _table(header, body, text_columns=3)
     return "\n".join(lines)
+
+
+def order_ages(phase_dir: str | Path, manifest: Mapping[str, Any]) -> pd.DataFrame:
+    """Per fleet size, arrival rate, and allocator: assignments, and the median, 90th
+    percentile, and largest `order_age` (steps) at assignment, from every run's
+    assignments.csv. Shows which orders an allocator serves first when orders pile up."""
+    folders = [Path(phase_dir) / "runs" / cell["name"] for cell in manifest["cells"]]
+    rows = dataset.read_rows(dataset.read_runs(folders))
+    order = {name: i for i, name in enumerate(FINAL_ALLOCATORS)}
+    ages = (
+        rows.groupby(["fleet_size", "arrival_rate", "allocator"])["order_age"]
+        .agg(
+            assignments="size",
+            median="median",
+            p90=lambda a: float(np.percentile(a, 90)),
+            max="max",
+        )
+        .reset_index()
+    )
+    ages["_order"] = ages["allocator"].map(order)
+    ages = ages.sort_values(["fleet_size", "arrival_rate", "_order"])
+    return ages.drop(columns="_order").reset_index(drop=True)
 
 
 def report(phase_dir: str | Path, repo: str | Path = ".") -> str:
     """The Markdown report of a finished phase, from its manifest, sweep.csv files, and, for
-    the final phase, the learned runs' assignments.csv."""
+    the final phase, every run's assignments.csv."""
     manifest = read_manifest(phase_dir)
     results = read_results(phase_dir, manifest)
     if manifest["phase"] == "tune":
         return tuning_report(results, manifest)
-    return final_report(results, manifest, selection_bias(phase_dir, manifest, repo))
+    bias = selection_bias(phase_dir, manifest, repo)
+    return final_report(results, manifest, bias, order_ages(phase_dir, manifest))
 
 
 def _phase_dir(manifest: Mapping[str, Any], repo: Path, data_root: Path | None) -> Path:

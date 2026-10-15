@@ -3,7 +3,16 @@
 The contract is [docs/learning_track.md](../docs/learning_track.md). Section numbers below refer
 to it. One step is one simulated second.
 
-Status: Stage 4 (pibt). The success criterion below was committed before the final runs.
+Status: Stage 4 (pibt). The success criterion below was committed before the final runs
+(commit `8133d47`).
+
+## Result
+
+The success criterion is not met. At 25 robots and arrival rate 0.2, learned minus tuned
+`cost_aware` has a median of -6.00 orders per hour, with a 95% interval of [-20.40, 7.20] (4
+wins, 6 losses). At 5 and 10 robots, `learned` delivers more orders per hour than both
+baselines in every cell, with intervals above 0. But it gets there partly by serving the newest
+orders first, and old orders wait much longer (see [Order age](#order-age-at-assignment)).
 
 ## Question
 
@@ -162,7 +171,153 @@ tuning. Offline accuracy did not rank the models the way the closed loop did.
 
 ## Final evaluation
 
-To be filled in from the final runs on seeds 1-10.
+Seeds 1-10, fleets 5, 10, 25, arrival rates 0.1 and 0.2, `planning.method: pibt`, each
+allocator run once: `hungarian`, `cost_aware` with weight 4, and `learned` with
+`cost_model_linear.json` (SHA-256 `fbf675a96ca3...`, full hash in the manifest). Nothing changed
+after these numbers came in. The order age table below is reporting added afterwards, from the
+same runs.
+
+All tables in this section come from
+`python -m fleet_learning.closed_loop report learning/data/8133d475c5b3/closed_loop/final`.
+
+Orders per hour are deliveries per simulated hour after the 600-step warmup. Completion times are
+the means over runs of each run's `mean_completion_steps` and `p95_completion_steps`, in steps.
+Wall s is the wall time of all 10 runs, summed.
+
+| Robots | Rate | Allocator | Runs | Orders/h mean | Orders/h median | Completion mean | Completion p95 | Deadlocked | Frozen | Wall s |
+| --- | --- | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
+| 5 | 0.1 | hungarian | 10 | 177.00 | 176.40 | 1212.9 | 1993.1 | 0 | 0 | 0.37 |
+| 5 | 0.1 | cost_aware | 10 | 179.40 | 179.40 | 1227.7 | 1954.5 | 0 | 0 | 0.37 |
+| 5 | 0.1 | learned | 10 | 182.40 | 183.00 | 181.8 | 407.5 | 0 | 0 | 0.40 |
+| 5 | 0.2 | hungarian | 10 | 176.64 | 177.00 | 2159.3 | 2732.5 | 0 | 0 | 0.61 |
+| 5 | 0.2 | cost_aware | 10 | 178.44 | 178.80 | 2267.8 | 2727.9 | 0 | 0 | 0.45 |
+| 5 | 0.2 | learned | 10 | 185.52 | 186.00 | 149.6 | 259.5 | 0 | 0 | 0.72 |
+| 10 | 0.1 | hungarian | 10 | 299.64 | 298.80 | 445.6 | 864.2 | 0 | 0 | 0.55 |
+| 10 | 0.1 | cost_aware | 10 | 308.52 | 310.20 | 399.8 | 745.0 | 0 | 0 | 0.54 |
+| 10 | 0.1 | learned | 10 | 314.64 | 313.80 | 214.1 | 583.8 | 0 | 0 | 0.67 |
+| 10 | 0.2 | hungarian | 10 | 299.64 | 298.80 | 1467.0 | 2200.0 | 0 | 0 | 0.80 |
+| 10 | 0.2 | cost_aware | 10 | 308.76 | 309.00 | 1470.2 | 2092.3 | 0 | 0 | 0.68 |
+| 10 | 0.2 | learned | 10 | 315.96 | 315.60 | 169.4 | 322.6 | 0 | 0 | 0.79 |
+| 25 | 0.1 | hungarian | 10 | 356.52 | 363.60 | 94.9 | 160.4 | 0 | 0 | 1.03 |
+| 25 | 0.1 | cost_aware | 10 | 358.32 | 363.00 | 96.1 | 160.7 | 0 | 0 | 1.02 |
+| 25 | 0.1 | learned | 10 | 357.24 | 363.60 | 95.2 | 160.7 | 0 | 0 | 1.28 |
+| 25 | 0.2 | hungarian | 10 | 472.56 | 472.20 | 849.9 | 1395.6 | 0 | 0 | 1.35 |
+| 25 | 0.2 | cost_aware | 10 | 488.40 | 490.20 | 816.3 | 1326.2 | 0 | 0 | 1.34 |
+| 25 | 0.2 | learned | 10 | 481.80 | 488.40 | 246.3 | 462.2 | 0 | 0 | 1.36 |
+
+No run deadlocked, froze, or aborted. In every cell except 25 robots at rate 0.1, orders pile
+up: the baselines assign them a median 187 to 1316 steps after they arrive (order age table
+below). Completion times then
+depend on which orders get served, and they only count delivered orders. Do not read the short
+`learned` completion times as faster service; see the order age table.
+
+### Paired differences
+
+Learned minus each baseline in `orders_per_hour`, paired by seed (a seed gives the same orders
+under every allocator). Median over the 10 seeds, with a 95% percentile bootstrap interval:
+10,000 resamples with `numpy.random.default_rng(0)`.
+
+learned minus `hungarian`:
+
+| Robots | Rate | Wins/ties/losses | Median | 95% interval |
+| --- | --- | ---: | ---: | ---: |
+| 5 | 0.1 | 10/0/0 | 5.40 | [3.60, 7.20] |
+| 5 | 0.2 | 10/0/0 | 9.00 | [7.20, 10.80] |
+| 10 | 0.1 | 10/0/0 | 13.80 | [10.80, 18.00] |
+| 10 | 0.2 | 9/0/1 | 18.60 | [13.20, 20.40] |
+| 25 | 0.1 | 6/3/1 | 1.20 | [0.00, 2.40] |
+| 25 | 0.2 | 7/0/3 | 8.40 | [-3.60, 20.40] |
+
+learned minus tuned `cost_aware`:
+
+| Robots | Rate | Wins/ties/losses | Median | 95% interval |
+| --- | --- | ---: | ---: | ---: |
+| 5 | 0.1 | 9/1/0 | 2.40 | [1.20, 4.80] |
+| 5 | 0.2 | 9/0/1 | 7.20 | [3.60, 10.80] |
+| 10 | 0.1 | 8/1/1 | 4.20 | [0.60, 12.60] |
+| 10 | 0.2 | 9/0/1 | 6.00 | [3.60, 12.00] |
+| 25 | 0.1 | 3/2/5 | -0.60 | [-2.40, 1.20] |
+| 25 | 0.2 | 4/0/6 | -6.00 | [-20.40, 7.20] |
+
+Criterion (25 robots, rate 0.2, interval above 0 against `cost_aware`): not met. The median is
+negative and the interval contains 0, so this run shows no difference in either direction at
+that cell. Against `cost_aware`, the intervals lie above 0 at 5 and 10 robots, with medians of
+2.40 to 7.20 orders per hour (1% to 4%).
+
+### Selection bias check
+
+`model_io` costs for the pairs `learned` chose in the final runs, against their
+`steps_to_pickup`, after the section 3 filters with the training margin of 900 steps. Errors in
+steps; bias is predicted minus observed.
+
+| Rows from | Rows | MAE | Bias |
+| --- | ---: | ---: | ---: |
+| offline test | 54525 | 10.57 | 0.42 |
+| final learned runs | 14158 | 10.77 | -2.20 |
+|   n5 r0.1 | 1393 | 7.03 | -5.52 |
+|   n5 r0.2 | 1432 | 7.53 | -6.42 |
+|   n10 r0.1 | 2370 | 9.37 | -1.03 |
+|   n10 r0.2 | 2435 | 9.47 | -4.04 |
+|   n25 r0.1 | 2745 | 8.88 | 1.84 |
+|   n25 r0.2 | 3783 | 16.48 | -1.85 |
+
+The MAE on its own choices (10.77) is close to the offline test (10.57), so the model is not
+badly fooled overall. The bias turns negative: the pairs it chose take 2.20 steps longer than it
+predicted, and 5 to 6 steps longer at 5 robots. That is the expected direction for a model that
+picks the pairs it scores lowest. At 25 robots and rate 0.2 the MAE is 16.48, against 12.70 for
+all 25-robot rows offline (all three rates, so not a like-for-like cell).
+
+### Order age at assignment
+
+`order_age` at assignment, in steps, over every assignment of the final runs:
+
+| Robots | Rate | Allocator | Assignments | Median | p90 | Max |
+| --- | --- | --- | ---: | ---: | ---: | ---: |
+| 5 | 0.1 | hungarian | 1803 | 793 | 1681 | 2431 |
+| 5 | 0.1 | cost_aware | 1825 | 826 | 1640 | 2335 |
+| 5 | 0.1 | learned | 1852 | 45 | 211 | 897 |
+| 5 | 0.2 | hungarian | 1807 | 1314 | 2453 | 3041 |
+| 5 | 0.2 | cost_aware | 1830 | 1316 | 2418 | 2959 |
+| 5 | 0.2 | learned | 1888 | 35 | 120 | 589 |
+| 10 | 0.1 | hungarian | 3034 | 223 | 647 | 1133 |
+| 10 | 0.1 | cost_aware | 3115 | 187 | 557 | 891 |
+| 10 | 0.1 | learned | 3172 | 28 | 218 | 2304 |
+| 10 | 0.2 | hungarian | 3072 | 962 | 1850 | 2559 |
+| 10 | 0.2 | cost_aware | 3146 | 981 | 1818 | 2401 |
+| 10 | 0.2 | learned | 3219 | 30 | 126 | 696 |
+| 25 | 0.1 | hungarian | 3612 | 0 | 0 | 12 |
+| 25 | 0.1 | cost_aware | 3612 | 0 | 0 | 69 |
+| 25 | 0.1 | learned | 3612 | 0 | 0 | 6 |
+| 25 | 0.2 | hungarian | 4881 | 512 | 1090 | 1764 |
+| 25 | 0.2 | cost_aware | 5003 | 469 | 1057 | 1470 |
+| 25 | 0.2 | learned | 4970 | 23 | 143 | 1000 |
+
+When orders pile up, `learned` assigns orders a median 23 to 45 steps after they arrive, and the
+baselines 469 to 1316 steps after. The linear model gives `order_age` a weight of +0.0014 steps
+per step of age (from `learning/models/cost_model_linear.json`, weight over scale). That is
+small, but with hundreds of pending orders at almost the same distance it decides the order, so
+the newest orders go first and the oldest wait. A deployed allocator would starve old orders.
+What this run does not show: how much of the throughput gain at 5 and 10 robots comes from that
+ordering, and how much from the `pickup_assigned` term (+15.1 steps per order already assigned at
+the same pickup), which spreads robots over pickups. An ablation without `order_age` would
+separate the two; it was not run.
+
+## Limits
+
+- One map (`warehouse_small`), one planner (`pibt`), no traffic rules or faults (Stages 5 and
+  6). All of these change how robots move, and the protocol must be rerun after each stage.
+- Selection bias: the training data comes from `nearest`, `hungarian`, and `cost_aware`, never
+  from `learned`. The negative bias on its own choices above is a sign of that.
+- The best `cost_aware` weight, 4, is the largest in the section 9 grid. A larger weight might do
+  better; the grid was fixed in advance and both sides had the same budget.
+- Offline accuracy did not predict closed-loop throughput: the model with the highest offline
+  MAE won tuning.
+- Most cells are overloaded, so `orders_per_hour` is close to the fleet's capacity and the
+  completion times mostly measure queue order. Only 25 robots at rate 0.1 is
+  below capacity, and there the three allocators are within 2 orders per hour of each other.
+- 10 seeds per cell. Intervals at 25 robots and rate 0.2 are 24 to 28 orders per hour wide.
+- The model uses `order_age`, which changes which orders get served, not only how long a trip
+  takes. The question in section 1 is about trip cost; this side effect is not part of it.
 
 ## How to reproduce
 
@@ -193,6 +348,10 @@ $P -m fleet_learning.dataset learning/data/430e08a9cd77/runs --margin 900
 # is the checked-out commit; the numbers do not depend on it.
 $P -m fleet_learning.closed_loop tune --models learning/models/cost_model_v1.json \
   learning/models/cost_model_linear.json learning/models/cost_model_nocells.json
+
+# Final runs, once, with the tuned choices, then the tables again.
+$P -m fleet_learning.closed_loop final --weight 4 --model learning/models/cost_model_linear.json
+$P -m fleet_learning.closed_loop report learning/data/<commit>/closed_loop/final
 ```
 
 Every number except wall time comes out the same on a clean checkout. The SHA-256 of each model
