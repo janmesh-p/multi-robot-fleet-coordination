@@ -78,6 +78,36 @@ TEST(Hungarian, AvoidsTheGreedyTrap) {
   EXPECT_EQ(best[1].task, 0);
 }
 
+// Orders pending longer than kStarvationSteps go first, oldest first, up to one per robot; the
+// robots left over then match as usual. Without the guard the closest orders win.
+TEST(StarvationGuard, StarvingOrdersGoFirstOldestFirst) {
+  for (const AllocationMethod method :
+       {AllocationMethod::kHungarian, AllocationMethod::kCostAware}) {
+    Scene s(kCorridor, {{0, 0}, {0, 1}});
+    s.world.setNow(1000);
+    s.tasks.add(order(0, {0, 8}, 300));  // starving, the oldest
+    s.tasks.add(order(1, {0, 9}, 350));  // starving
+    s.tasks.add(order(2, {0, 2}, 990));  // young and close
+    Config c = configFor(method);
+    const std::vector<Assignment> guarded = s.run(*makeAllocator(c), {0});
+    ASSERT_EQ(guarded.size(), 1U);
+    EXPECT_EQ(guarded[0].task, 0);  // one robot: the oldest starving order
+    const std::vector<Assignment> both = s.run(*makeAllocator(c), {0, 1});
+    ASSERT_EQ(both.size(), 2U);
+    EXPECT_EQ(both[0].task + both[1].task, 0 + 1);  // two robots: both starving orders
+    c.features.starvation_guard = false;
+    const std::vector<Assignment> free = s.run(*makeAllocator(c), {0});
+    ASSERT_EQ(free.size(), 1U);
+    EXPECT_EQ(free[0].task, 2);
+  }
+  // Nobody starves yet: the guard changes nothing.
+  Scene s(kCorridor, {{0, 0}});
+  s.world.setNow(kStarvationSteps);
+  s.tasks.add(order(0, {0, 8}, 0));  // exactly kStarvationSteps old: not starving yet
+  s.tasks.add(order(1, {0, 2}, 10));
+  EXPECT_EQ(s.run(*makeAllocator(configFor(AllocationMethod::kHungarian)), {0})[0].task, 1);
+}
+
 TEST(Hungarian, MoreRobotsThanOrdersSendsTheClosest) {
   Scene s(kCorridor, {{0, 0}, {0, 5}, {0, 9}});
   s.tasks.add(order(0, {0, 8}));  // 8, 3, and 1 away

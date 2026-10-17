@@ -4,11 +4,12 @@ Warehouse multi-agent pickup and delivery (MAPD): task allocation, lifelong mult
 finding, traffic management, and fault recovery for up to 100 robots. Grid simulator for scale,
 Isaac Sim for physics, desk hardware in the loop.
 
-**Status:** Stage 4 (coordinated planning) done. Where independent planning froze every run
-([baseline](#baseline-stage-2)), four coordinated planners ran 276 simulated hours with up to
-100 robots, without a safety stop or a frozen run ([numbers](#coordinated-planning-stage-4)).
-With 25 robots under heavy load ECBS delivers the most. PIBT plans fastest but delivers up to 22%
-less than windowed cooperative A* on one-cell aisles. CBS stalls when robots meet head-on. Every
+**Status:** Stage 5 (execution and traffic) done. Robots that miss up to one step in three ran
+320 simulated hours under four coordinated planners without a safety stop. With the traffic rules
+off, robot safety stopped them 44,170 times at one missed step in ten
+([numbers](#execution-and-traffic-stage-5)). Where independent planning froze every run
+([baseline](#baseline-stage-2)), coordinated planners ran 276 simulated hours with up to 100
+robots without a safety stop or a frozen run ([numbers](#coordinated-planning-stage-4)). Every
 number in this README comes from measured runs.
 
 ## Architecture
@@ -160,7 +161,8 @@ repeated cell is a wait, and a robot holds its last cell when its path ends.
 - Coordinated planners need station queues and parking, so no two robots share a goal. A robot
   whose station has no free waiting cell waits at home, because waiting on a station or in an
   aisle can block the robots it waits for. The baseline still waits where it is, so its
-  reference does not move. Robots that run late (`execution.delay_probability`) need Stage 5.
+  reference does not move. Robots that run late are covered in
+  [Stage 5](#execution-and-traffic-stage-5).
 - No path passes through parking, so every parking cell is a dead end, and PIBT's guarantee
   needs a map without one. A robot parked in one whose only exit is held by a robot that wants
   in would wait forever, so in PIBT the robot at the exit steps aside and the parked one leaves
@@ -169,52 +171,55 @@ repeated cell is a wait, and a robot holds its last cell when its path ends.
 
 `warehouse_small`, optimal matching, one simulated hour per run, seeds 1 to 10. Orders per hour
 in steady state, mean over the seeds. 0.1 orders per step offers 360 orders per hour; 0.2 offers
-720.
+720. Measured again on the Stage 5 code, with the starvation guard on: it changes a run only once
+an order has waited 600 steps, so the 25-robot runs at 0.1 orders per step are the same runs.
 
 | Planner | 0.1/step, 5 robots | 10 robots | 25 robots | 0.2/step, 5 robots | 10 robots | 25 robots |
 |---|---:|---:|---:|---:|---:|---:|
 | `independent_astar` | 0.1 | 0.0 | 0.0 | 0.0 | 0.0 | 0.0 |
-| `pibt` | 177.0 | 299.6 | 356.5 | 176.6 | 299.6 | 472.6 |
-| `windowed_coop_astar` | 189.6 | 346.8 | 359.2 | 189.4 | 357.0 | 609.1 |
-| `prioritized` | 190.2 | 346.8 | 358.7 | 189.7 | 358.7 | 614.6 |
-| `ecbs` | 190.1 | 348.2 | 359.5 | 190.2 | 360.5 | 652.4 |
-| `cbs` | 190.4 | 316.4 | not run | 190.7 | 343.0 | not run |
+| `pibt` | 175.4 | 298.9 | 356.5 | 174.6 | 302.4 | 465.1 |
+| `windowed_coop_astar` | 184.6 | 346.8 | 359.2 | 184.7 | 349.9 | 602.2 |
+| `prioritized` | 185.2 | 346.8 | 358.7 | 185.0 | 351.6 | 611.5 |
+| `ecbs` | 185.4 | 348.2 | 359.5 | 185.2 | 352.9 | 653.3 |
+| `cbs` | 186.7 | 316.4 | not run | 186.4 | 294.8 | not run |
 
 - `pibt`, `windowed_coop_astar`, `prioritized`, and `ecbs`: 240 runs here and 36 on
   `warehouse_large` below, with no robot-safety stop, no violation, and no frozen run.
   `independent_astar` froze all 60 of its runs.
 - At 0.1 orders per step, 25 robots keep up with the 360 orders offered under every coordinated
   planner. With 5 robots the robots themselves are the limit.
-- PIBT delivers least: 14% below `windowed_coop_astar` at 10 robots and 0.1 orders per step, 22%
+- PIBT delivers least: 14% below `windowed_coop_astar` at 10 robots and 0.1 orders per step, 23%
   below at 25 robots and 0.2. In a one-cell aisle the robot that gives way backs up to the next
   junction and then comes back, where the other planners wait or take another aisle. It is the
-  fastest planner: 0.11 ms per call at p95 with 25 robots and 0.2 orders per step, against
-  0.22 ms for `windowed_coop_astar`, 0.29 ms for `prioritized`, and 2.0 ms for `ecbs`.
+  fastest planner: 0.18 ms per call at p95 with 25 robots and 0.2 orders per step, against
+  0.27 ms for `windowed_coop_astar`, 0.38 ms for `prioritized`, and 2.6 ms for `ecbs`.
 - ECBS delivers most at 25 robots and 0.2 orders per step, ahead of `windowed_coop_astar` in all
   10 seeds.
 - CBS finds the least total cost in each window, but two robots meeting head-on in a one-cell
   aisle make it split on the same conflict again and again, one step further each time. At 10
   robots and 0.1 orders per step, 2,994 of its 9,598 calls ran out of budget, and 2 of the 10
-  runs froze: once every robot has stopped, the same failing call repeats. At 0.2, 1 of 10 runs
-  froze. Not run at 25 robots.
+  runs froze: once every robot has stopped, the same failing call repeats. At 0.2, 3 of 10 runs
+  froze (1 of 10 before the starvation guard). Not run at 25 robots.
 - Planning times are wall time on one core of the build machine, the mean of each run's p95;
-  every other number depends only on the seed.
+  every other number depends only on the seed. Two benchmark processes shared the machine's two
+  cores, so the times run higher than in Stage 4.
 
 `warehouse_large`, 0.5 orders per step (1,800 per hour offered), seeds 1 to 3:
 
 | Planner | 25 robots | 50 robots | 100 robots | Planning p95 at 100 robots |
 |---|---:|---:|---:|---:|
-| `pibt` | 406.4 | 564.8 | 506.4 | 0.42 ms |
-| `windowed_coop_astar` | 450.8 | 667.2 | 581.2 | 0.50 ms |
-| `prioritized` | 457.6 | 676.8 | 574.4 | 1.47 ms |
-| `ecbs` | 447.2 | 671.6 | 551.2 | 7.02 ms |
+| `pibt` | 399.2 | 561.6 | 501.6 | 0.70 ms |
+| `windowed_coop_astar` | 434.8 | 649.6 | 574.8 | 0.75 ms |
+| `prioritized` | 441.2 | 665.6 | 576.4 | 1.95 ms |
+| `ecbs` | 430.8 | 650.4 | 554.0 | 9.27 ms |
 
 Every planner delivers less with 100 robots than with 50. The map has 150 parking cells and 100
 are homes, which leaves 50 to wait on near its 20 stations; robots that find none wait at home
 and drive over when their turn comes. Stage 7 measures where the time goes.
 
-What this does not show: robots that run late (Stage 5), lost messages and dead robots
-(Stage 6), and the learned allocator (the learning track).
+What this does not show: robots that run late and closed aisles
+([Stage 5](#execution-and-traffic-stage-5)), lost messages and dead robots (Stage 6), and the
+learned allocator (the learning track).
 
 ```bash
 ./build/bench_planning --config benchmarks/configs/planning.yaml --fleet 5,10,25 --seeds 1-10
@@ -226,6 +231,134 @@ What this does not show: robots that run late (Stage 5), lost messages and dead 
   --planners independent_astar --fleet 5,10,25 --seeds 1-10   # and --rate 0.2
 ./build/bench_planning --config benchmarks/configs/planning.yaml --fleet 25,50,100 \
   --seeds 1-3 --rate 0.5 --map maps/warehouse_large.txt
+```
+
+## Execution and traffic (Stage 5)
+
+Plans are conflict-free only while robots keep to time. Stage 5 makes robots run late and adds
+the rules that keep them apart anyway.
+
+- Late robots: with `execution.delay_probability` p, a robot misses each step it could take with
+  probability p, drawn from its own seeded stream.
+- Permits: every tick each robot gets its plan and how far along it may go. A robot may be told to
+  follow another out of its cell; if that robot stays after all, it waits behind it, and robot
+  safety never has to stop it. The invariant checker reports any move past a permit.
+- Dependency graph (`features.dependency_graph`, Hönig et al. 2019): for every cell, the order in
+  which the plans visit it. A robot enters a cell once the robot planned there before it has left,
+  or as it leaves. It needs plans made together, so it applies with rolling replanning.
+- Reservations (`features.intersection_reservations`): a robot enters a cell only while it is
+  empty or its robot leaves in the same step, one robot per cell per step, the older order first.
+  They need no shared plan order, so they also cover planning to goals.
+- Deadlock recovery (`features.deadlock_recovery`): held robots that wait for each other in a
+  cycle get new plans. Rolling replanning moves its next call to the next step; planning to goals
+  replans the whole fleet. Replanning only the robots on the cycle froze one benchmark run: they
+  found no way out around the others' plans.
+- Starvation guard (`features.starvation_guard`): the matching allocators serve orders that have
+  waited more than 600 steps first, oldest first. The cost still decides which robot takes each.
+- Aisle closures: `block_cells` and `unblock_cells` events close and reopen aisle cells. A closure
+  takes effect once no robot stands on any of its cells, on the floor and in the coordinator. Then
+  the distance table is rebuilt and the fleet replans. A closure that would cut the open aisles
+  apart is rejected at startup.
+- All of these are on by default. The traffic rules apply to coordinated planners only, and the
+  baseline reference did not move.
+
+`warehouse_small`, optimal matching, 0.1 orders per step, rolling replanning, one simulated hour
+per run, seeds 1 to 10. Orders per hour in steady state, mean over the seeds, by the chance that a
+robot misses a step. Column 0 is the Stage 4 table.
+
+| Robots | Planner | 0 | 0.05 | 0.1 | 0.2 | 0.3 |
+|---:|---|---:|---:|---:|---:|---:|
+| 10 | `pibt` | 298.9 | 281.0 | 261.8 | 229.0 | 199.7 |
+| 10 | `windowed_coop_astar` | 346.8 | 336.5 | 319.2 | 282.5 | 247.7 |
+| 10 | `prioritized` | 346.8 | 336.8 | 321.1 | 284.2 | 247.8 |
+| 10 | `ecbs` | 348.2 | 338.9 | 323.4 | 286.7 | 250.4 |
+| 25 | `pibt` | 356.5 | 355.7 | 357.8 | 343.7 | 285.1 |
+| 25 | `windowed_coop_astar` | 359.2 | 358.8 | 358.7 | 358.6 | 357.5 |
+| 25 | `prioritized` | 358.7 | 359.2 | 358.4 | 357.4 | 357.0 |
+| 25 | `ecbs` | 359.5 | 359.0 | 359.2 | 359.3 | 358.0 |
+
+- No safety stop and no violation in the 320 runs with late robots.
+- With 10 robots the robots are the limit, so missed steps cost deliveries: 7% to 12% fewer at
+  0.1, 18% to 23% fewer at 0.2. With 25 robots there is slack: `windowed_coop_astar`,
+  `prioritized`, and `ecbs` lose under 1% even at 0.3. PIBT loses 4% at 0.2 and 20% at 0.3.
+
+Which rule does the work, at one missed step in ten: the four planners above with 10 and 25
+robots, 80 runs per row.
+
+| Rules on | Robot-safety stops | Cycles replanned per run, 10 / 25 robots |
+|---|---:|---:|
+| both (the default) | 0 | 0 / 0 |
+| dependency graph only | 0 | 0 / 0 |
+| reservations only | 0 | 13.5 / 27.9 |
+| neither | 44,170 | 0 / 0 |
+
+- With the dependency graph on, reservations never changed a decision: the same 80 runs, down to
+  the log hash. They matter when plans are made apart (next table).
+- Reservations alone keep late robots apart too, but not in the planned order, so robots meet
+  head-on and wait for each other. PIBT needed 75 replans per hour with 25 robots.
+- With neither rule, robot safety stopped robots 44,170 times. Each stop is a violation for a
+  coordinated planner; these runs used `--record`, where a normal run aborts at the first.
+
+Planning to goals (rolling replanning off) with one missed step in ten: `prioritized` and `ecbs`
+with 10 and 25 robots and `cbs` with 10, 50 runs per row.
+
+| Rules | Frozen runs | Robot-safety stops | Orders per hour |
+|---|---:|---:|---:|
+| reservations and recovery (the default) | 0 | 0 | 334 to 359 |
+| the same robots on time | 0 | 0 | 356 to 359 |
+| no deadlock recovery | 50 | 0 | 0.4 to 17 |
+| no reservations | 50 | 1,052,387 | 0.6 to 12.5 |
+
+One `cbs` run with recovery had a cycle that lasted at least 10 steps, so the stall monitor counts
+a deadlock. It broke later, and no run froze.
+
+Starvation guard, mean over the four planners and 10 seeds, guard on / off. Only 0.1 orders per
+step with 25 robots keeps up with every order.
+
+| Orders per step | Robots | Oldest open order at the end, steps | Slowest delivery, steps | Orders per hour |
+|---:|---:|---:|---:|---:|
+| 0.1 | 5 | 1,819 / 2,143 | 1,818 / 2,121 | 182.6 / 186.7 |
+| 0.1 | 10 | 417 / 480 | 537 / 586 | 335.2 / 335.4 |
+| 0.1 | 25 | 79 / 79 | 154 / 154 | 358.5 / 358.5 |
+| 0.2 | 5 | 2,719 / 2,880 | 2,707 / 2,829 | 182.4 / 186.5 |
+| 0.2 | 10 | 1,952 / 2,233 | 1,949 / 2,209 | 339.2 / 343.9 |
+| 0.2 | 25 | 853 / 938 | 885 / 983 | 583.0 / 587.2 |
+
+- Where robots keep up, no order waits 600 steps and nothing changes.
+- Under overload the oldest open order is 6% to 15% younger with the guard, and up to 2.2% fewer
+  orders are delivered: robots walk farther to old orders.
+- It sets no limit under real overload. When every waiting order is older than 600 steps, the guard
+  only serves them oldest first.
+
+Closed aisle: `benchmarks/configs/closure.yaml` closes six cells of the middle aisle from step 900
+to step 2700. In 120 runs (the four planners above with rolling replanning, and `prioritized` and
+`ecbs` planning to goals, each with 10 and 25 robots) there was no safety stop and no violation.
+Every planner and fleet size delivered within 0.7% of its orders per hour with the aisle open,
+mean over the seeds. In a first
+version every cell closed as soon as it was empty, so a robot inside the six cells was trapped
+when the cells around it closed, and `windowed_coop_astar` found no plan for the whole half hour
+in 2 of 10 runs. A test now covers that run.
+
+What this does not show: slow robots or bursts of delay (each missed step is drawn on its own),
+more than one closure scenario, and lost messages and dead robots (Stage 6).
+
+```bash
+for p in 0.05 0.1 0.2 0.3; do
+  ./build/bench_planning --config benchmarks/configs/planning.yaml --fleet 10,25 --seeds 1-10 \
+    --delay $p
+done
+./build/bench_planning --config benchmarks/configs/planning.yaml --fleet 10,25 --seeds 1-10 \
+  --delay 0.1 --disable intersection_reservations
+  # also: --disable dependency_graph, and --disable dependency_graph,intersection_reservations --record
+./build/bench_planning --config benchmarks/configs/planning.yaml --planners prioritized,ecbs \
+  --fleet 10,25 --seeds 1-10 --delay 0.1 --disable rolling_replanning
+  # also: --planners cbs --fleet 10; without --delay; and with deadlock_recovery, or with
+  # intersection_reservations and --record, added to --disable
+./build/bench_planning --config benchmarks/configs/planning.yaml --fleet 5,10,25 --seeds 1-10 \
+  --disable starvation_guard   # and --rate 0.2
+./build/bench_planning --config benchmarks/configs/closure.yaml --fleet 10,25 --seeds 1-10
+./build/bench_planning --config benchmarks/configs/closure.yaml --planners prioritized,ecbs \
+  --fleet 10,25 --seeds 1-10 --disable rolling_replanning
 ```
 
 ## Build and test (fleet_core)
@@ -308,7 +441,7 @@ How to contribute: [CONTRIBUTING.md](CONTRIBUTING.md).
 | 2 | Uncoordinated baseline | done |
 | 3 | Task allocation | done |
 | 4 | Lifelong MAPF, PIBT | done |
-| 5 | Execution and traffic | |
+| 5 | Execution and traffic | done |
 | 6 | Faults, fuzz harness | |
 | 7 | Benchmarks and evidence | |
 | 8 | Isaac Sim | |

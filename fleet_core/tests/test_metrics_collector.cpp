@@ -98,8 +98,9 @@ TEST_F(MetricsCollectorTest, WritesRunDirectory) {
 
   EXPECT_EQ(readFile(run / "steps.csv"),
             "t,orders_created,deliveries,moved,planned_wait,hold,service,idle,delayed,blocked,"
-            "assignments,robots_planned,planning_ms,expansions,on_cycle,behind,stalled\n"
-            "3,2,1,1,0,0,0,0,0,1,1,0,1.5,0,0,0,1\n");
+            "assignments,robots_planned,planning_ms,expansions,on_cycle,behind,stalled,yield,"
+            "no_permit,deadlocks_resolved\n"
+            "3,2,1,1,0,0,0,0,0,1,1,0,1.5,0,0,0,1,0,0,0\n");
   EXPECT_EQ(readFile(run / "positions.csv"),
             "t,robot,row,col,status,outcome,waits_for,on_cycle\n"
             "3,0,1,2,idle,moved,-1,0\n"

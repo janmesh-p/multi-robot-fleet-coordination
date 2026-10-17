@@ -1,5 +1,6 @@
 #include "fleet_core/verification/invariant_checker.hpp"
 
+#include <algorithm>
 #include <cstddef>
 #include <cstdlib>
 #include <map>
@@ -41,6 +42,8 @@ std::string_view toString(ViolationKind kind) {
       return "phantom_delivery";
     case ViolationKind::kTaskLost:
       return "task_lost";
+    case ViolationKind::kUnpermittedMove:
+      return "unpermitted_move";
   }
   return "unknown";
 }
@@ -49,7 +52,8 @@ InvariantChecker::InvariantChecker(bool conflict_free) : conflict_free_(conflict
 
 std::vector<Violation> InvariantChecker::check(const GridMap& map, const StepTruth& step,
                                                const TruthSnapshot& after, const TaskManager& tasks,
-                                               int64_t orders_issued) {
+                                               int64_t orders_issued,
+                                               const std::vector<RobotCommand>& commands) {
   std::vector<Violation> out;
   const auto report = [&](ViolationKind kind, std::string detail) {
     out.push_back(Violation{step.t, kind, std::move(detail)});
@@ -98,6 +102,21 @@ std::vector<Violation> InvariantChecker::check(const GridMap& map, const StepTru
       report(ViolationKind::kCoordinationConflict, robotText(i) + " " +
                                                        std::string(toString(m.outcome)) +
                                                        " entering " + cellText(m.intended));
+    }
+  }
+
+  // Permits: every cell a robot moved into lies within its newest permit.
+  for (const RobotCommand& command : commands) {
+    const auto i = static_cast<size_t>(command.robot);
+    if (command.robot < 0 || i >= step.motion.size()) continue;
+    const MotionRecord& m = step.motion[i];
+    if (m.to == m.from) continue;
+    const auto limit = std::min(static_cast<size_t>(std::max(command.permitted_until, 0)) + 1,
+                                command.path.size());
+    if (std::find(command.path.begin(), command.path.begin() + static_cast<std::ptrdiff_t>(limit),
+                  m.to) == command.path.begin() + static_cast<std::ptrdiff_t>(limit)) {
+      report(ViolationKind::kUnpermittedMove,
+             robotText(i) + " entered " + cellText(m.to) + " beyond its permit");
     }
   }
 

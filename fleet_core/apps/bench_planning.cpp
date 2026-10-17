@@ -2,12 +2,14 @@
 //
 //   bench_planning --config <file.yaml> [--planners pibt,windowed_coop_astar,prioritized,ecbs]
 //                  [--fleet 5,10,25] [--seeds 1-5] [--rate R] [--map <map.txt>]
-//                  [--out <file.csv>]
+//                  [--delay P] [--disable feature,...] [--record] [--out <file.csv>]
 //
 // Each run is the config with planning.method, fleet.size, and run.seed replaced (and
-// orders.arrival_rate and map.file, when given), so per-seed differences between planners are
-// paired. Writes one CSV row per run and prints one line per planner and fleet size. Exit codes:
-// 0 done, 1 error, 2 bad arguments, 5 a coordinated planner had a violation or an aborted run.
+// orders.arrival_rate, map.file, execution.delay_probability, and feature toggles, when given),
+// so per-seed differences between planners are paired. Writes one CSV row per run and prints one
+// line per planner and fleet size. Exit codes: 0 done, 1 error, 2 bad arguments, 5 a coordinated
+// planner had a violation or an aborted run (not checked with --record, for ablations that
+// expect violations).
 #include <cstdint>
 #include <cstdio>
 #include <exception>
@@ -21,6 +23,7 @@
 #include <vector>
 
 #include "fleet_core/common/config.hpp"
+#include "fleet_core/execution/grid_executor.hpp"
 #include "fleet_core/planning/path_planner.hpp"
 #include "fleet_core/simulation.hpp"
 #include "fleet_core/sweep.hpp"
@@ -31,13 +34,51 @@ namespace {
 
 int usage(std::ostream& out, int code) {
   out << "usage: bench_planning --config <file.yaml> [--planners a,b,...] [--fleet 5,10,25]\n"
-         "                      [--seeds 1-5] [--rate R] [--map <map.txt>] [--out <file.csv>]\n"
+         "                      [--seeds 1-5] [--rate R] [--map <map.txt>] [--delay P]\n"
+         "                      [--disable feature,...] [--record] [--out <file.csv>]\n"
          "  --planners  planning methods (default pibt,windowed_coop_astar,prioritized,ecbs)\n"
          "  --fleet     fleet sizes (default 5,10,25)\n"
          "  --seeds     seeds, a list or a range (default 1-5)\n"
          "  --rate      orders per step instead of the config's\n"
-         "  --map       map file instead of the config's\n";
+         "  --map       map file instead of the config's\n"
+         "  --delay     execution.delay_probability instead of the config's\n"
+         "  --disable   turn these features off, for example dependency_graph\n"
+         "  --record    keep running after a violation (verification.on_violation: record)\n";
   return code;
+}
+
+// Turns one feature toggle off by its YAML name.
+void disable(FeatureToggles& f, const std::string& name) {
+  bool* const toggles[] = {&f.station_queues,
+                           &f.parking,
+                           &f.distance_oracle,
+                           &f.congestion_cost,
+                           &f.rolling_replanning,
+                           &f.dependency_graph,
+                           &f.intersection_reservations,
+                           &f.deadlock_recovery,
+                           &f.starvation_guard};
+  const char* const names[] = {
+      "station_queues",     "parking",          "distance_oracle",           "congestion_cost",
+      "rolling_replanning", "dependency_graph", "intersection_reservations", "deadlock_recovery",
+      "starvation_guard"};
+  for (size_t i = 0; i < sizeof(names) / sizeof(names[0]); ++i) {
+    if (name == names[i]) {
+      *toggles[i] = false;
+      return;
+    }
+  }
+  throw std::invalid_argument("unknown feature \"" + name + "\"");
+}
+
+std::vector<std::string> splitList(const std::string& text) {
+  std::vector<std::string> out;
+  std::stringstream items(text);
+  std::string item;
+  while (std::getline(items, item, ',')) {
+    if (!item.empty()) out.push_back(item);
+  }
+  return out;
 }
 
 PlanningMethod parseMethod(const std::string& name) {
@@ -64,7 +105,7 @@ double mean(const std::vector<double>& v) {
   return v.empty() ? 0.0 : sum / static_cast<double>(v.size());
 }
 
-std::string csvRow(const RunSummary& s) {
+std::string csvRow(const RunSummary& s, double delay, const std::string& disabled) {
   char hash[17];
   std::snprintf(hash, sizeof(hash), "%016llx", static_cast<unsigned long long>(s.log_hash));
   std::ostringstream out;
@@ -75,16 +116,19 @@ std::string csvRow(const RunSummary& s) {
       << s.planner_failures << ',' << s.expansions << ',' << s.planning_p50_ms << ','
       << s.planning_p95_ms << ',' << s.violations << ',' << (s.aborted ? "true" : "false") << ','
       << s.deadlocks << ',' << s.stalled_robots << ',' << s.frozen_at << ',' << hash << ','
-      << s.wall_seconds;
+      << s.wall_seconds << ',' << delay << ',' << disabled << ',' << s.steps_run << ','
+      << s.delayed_steps << ',' << s.yields << ',' << s.traffic_holds << ',' << s.deadlocks_resolved
+      << ',' << s.max_completion_steps << ',' << s.oldest_open_steps;
   return out.str();
 }
 
 }  // namespace
 
 int main(int argc, char** argv) {
-  std::string config_path, out_path, map_path, rate_arg;
+  std::string config_path, out_path, map_path, rate_arg, delay_arg, disable_arg;
   std::string planners_arg = "pibt,windowed_coop_astar,prioritized,ecbs";
   std::string fleet_arg = "5,10,25", seeds_arg = "1-5";
+  bool record = false;
   for (int i = 1; i < argc; ++i) {
     const std::string_view arg(argv[i]);
     if (arg == "--config" && i + 1 < argc) {
@@ -99,6 +143,12 @@ int main(int argc, char** argv) {
       rate_arg = argv[++i];
     } else if (arg == "--map" && i + 1 < argc) {
       map_path = argv[++i];
+    } else if (arg == "--delay" && i + 1 < argc) {
+      delay_arg = argv[++i];
+    } else if (arg == "--disable" && i + 1 < argc) {
+      disable_arg = argv[++i];
+    } else if (arg == "--record") {
+      record = true;
     } else if (arg == "--out" && i + 1 < argc) {
       out_path = argv[++i];
     } else if (arg == "--help" || arg == "-h") {
@@ -112,14 +162,20 @@ int main(int argc, char** argv) {
   std::vector<PlanningMethod> methods;
   std::vector<int32_t> fleet_sizes;
   std::vector<uint64_t> seeds;
-  std::optional<double> rate;
+  std::optional<double> rate, delay;
+  const std::vector<std::string> disabled = splitList(disable_arg);
   try {
     methods = parseMethods(planners_arg);
-    if (!rate_arg.empty()) {
+    const auto number = [](const std::string& text, const char* what) {
       size_t used = 0;
-      rate = std::stod(rate_arg, &used);
-      if (used != rate_arg.size()) throw std::invalid_argument("bad rate \"" + rate_arg + "\"");
-    }
+      const double v = std::stod(text, &used);
+      if (used != text.size()) throw std::invalid_argument(std::string("bad ") + what);
+      return v;
+    };
+    if (!rate_arg.empty()) rate = number(rate_arg, "rate");
+    if (!delay_arg.empty()) delay = number(delay_arg, "delay");
+    FeatureToggles check;
+    for (const std::string& name : disabled) disable(check, name);
     for (const int64_t v : parseIntList(fleet_arg)) {
       if (v < 1 || v > 100000) throw std::invalid_argument("fleet sizes must be positive");
       fleet_sizes.push_back(static_cast<int32_t>(v));
@@ -140,28 +196,42 @@ int main(int argc, char** argv) {
       base.map.file = std::filesystem::absolute(map_path);
       base.map.generator.reset();
     }
+    if (delay) base.execution.delay_probability = *delay;
+    for (const std::string& name : disabled) disable(base.features, name);
+    if (record) base.verification.on_violation = ViolationMode::kRecord;
     validateConfig(base);
+    std::string disabled_text;
+    for (const std::string& name : disabled) {
+      disabled_text += (disabled_text.empty() ? "" : " ") + name;
+    }
     const std::string map_name =
         base.map.generator ? "a generated map" : base.map.file.filename().string();
     std::ostringstream csv;
     csv << "planner,fleet_size,seed,orders_delivered,orders_per_hour,mean_completion_steps,"
            "p95_completion_steps,conflicts,congestion_steps,planning_calls,planner_failures,"
            "expansions,planning_p50_ms,planning_p95_ms,violations,aborted,deadlocks,"
-           "stalled_robots,frozen_at,log_hash,wall_seconds\n";
+           "stalled_robots,frozen_at,log_hash,wall_seconds,delay_probability,disabled,steps_run,"
+           "delayed_steps,yields,traffic_holds,deadlocks_resolved,max_completion_steps,"
+           "oldest_open_steps\n";
     std::cout << "bench      " << base.run.name << " on " << map_name << ": "
               << toString(base.allocation.method) << " allocation, " << base.orders.arrival_rate
               << " orders per step, " << base.run.horizon_steps << " steps, window "
               << base.planning.window << ", replan every " << base.planning.replan_period
-              << " steps, " << seeds.size() << (seeds.size() == 1 ? " seed" : " seeds") << "\n\n"
-              << " planner               robots  orders/hour  completion  no plan  plan p95  "
-                 "violations  frozen     wall\n"
+              << " steps, " << seeds.size() << (seeds.size() == 1 ? " seed" : " seeds") << "\n";
+    if (base.execution.delay_probability > 0.0 || !disabled.empty() || record) {
+      std::cout << "execution  delay " << base.execution.delay_probability
+                << ", features off: " << (disabled.empty() ? "none" : disabled_text)
+                << (record ? ", violations recorded" : "") << "\n";
+    }
+    std::cout << "\n planner               robots  orders/hour  completion  no plan  plan p95  "
+                 "safety  violations  frozen     wall\n"
               << "                                     mean   mean steps    calls  ms, mean  "
-                 "           runs  s, mean\n";
+                 " stops              runs  s, mean\n";
     bool clean = true;
     for (const PlanningMethod method : methods) {
       for (const int32_t size : fleet_sizes) {
         std::vector<double> oph, completion, p95_ms, wall;
-        int64_t failures = 0, violations = 0;
+        int64_t failures = 0, violations = 0, stops = 0;
         int32_t frozen = 0, aborted = 0;
         for (const uint64_t seed : seeds) {
           Config c = base;
@@ -171,7 +241,8 @@ int main(int argc, char** argv) {
           c.run.name = base.run.name + "_" + std::string(toString(method)) + "_n" +
                        std::to_string(size) + "_s" + std::to_string(seed);
           const RunSummary s = Simulation(c).run().summary;
-          csv << csvRow(s) << "\n";
+          csv << csvRow(s, c.execution.delay_probability, disabled_text) << "\n";
+          stops += s.conflicts;
           oph.push_back(s.orders_per_hour);
           completion.push_back(s.mean_completion_steps);
           p95_ms.push_back(s.planning_p95_ms);
@@ -181,12 +252,12 @@ int main(int argc, char** argv) {
           if (s.frozen_at >= 0) ++frozen;
           if (s.aborted) ++aborted;
         }
-        if (isCoordinated(method) && (violations > 0 || aborted > 0)) clean = false;
-        char line[200];
+        if (!record && isCoordinated(method) && (violations > 0 || aborted > 0)) clean = false;
+        char line[220];
         std::snprintf(line, sizeof(line),
-                      " %-20s %7d  %11.1f  %10.1f  %7lld  %8.3f  %10lld  %6d  %7.2f\n",
+                      " %-20s %7d  %11.1f  %10.1f  %7lld  %8.3f  %6lld  %10lld  %6d  %7.2f\n",
                       std::string(toString(method)).c_str(), size, mean(oph), mean(completion),
-                      static_cast<long long>(failures), mean(p95_ms),
+                      static_cast<long long>(failures), mean(p95_ms), static_cast<long long>(stops),
                       static_cast<long long>(violations), frozen, mean(wall));
         std::cout << line << std::flush;
       }

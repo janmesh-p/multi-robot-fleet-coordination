@@ -67,7 +67,7 @@ class CostModel {
 };
 
 // allocation.method learned with this model as the pair cost.
-std::unique_ptr<TaskAllocator> makeLearnedAllocator(CostModel model);
+std::unique_ptr<TaskAllocator> makeLearnedAllocator(CostModel model, bool starvation_guard = false);
 
 // What predict_cost prints: a "row,prediction" header, then the model's cost of every data row
 // of `csv` (row counts from 0, the cost printed with %.17g). The CSV needs a header row and the

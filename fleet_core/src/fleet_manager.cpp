@@ -22,6 +22,16 @@ bool servicing(RobotStatus status) {
   return status == RobotStatus::kPicking || status == RobotStatus::kDropping;
 }
 
+// The traffic rules a config turns on. Only coordinated planners make plans the rules can keep,
+// so the uncoordinated baseline stays as it was. The dependency graph needs plans made together,
+// which only rolling replanning makes.
+TrafficRules trafficRules(const Config& config) {
+  const bool coordinated = isCoordinated(config.planning.method);
+  const FeatureToggles& f = config.features;
+  return TrafficRules{coordinated && f.rolling_replanning && f.dependency_graph,
+                      coordinated && f.intersection_reservations};
+}
+
 }  // namespace
 
 std::optional<std::string> planningRequirementGap(const Config& config) {
@@ -38,11 +48,6 @@ std::optional<std::string> planningRequirementGap(const Config& config) {
       (method == PlanningMethod::kWindowedCoopAStar || method == PlanningMethod::kPibt)) {
     return name + " needs features.rolling_replanning: it plans only planning.window steps ahead";
   }
-  if (config.execution.delay_probability > 0.0) {
-    return "execution.delay_probability > 0 with " + name +
-           " arrives in Stage 5: late robots break conflict-free plans until the execution "
-           "dependency graph holds the others back";
-  }
   return std::nullopt;
 }
 
@@ -58,7 +63,7 @@ FleetManager::FleetManager(const Config& config, WorldModel world,
       stations_(world_.map(), distances_, initialCells(world_), config.features.station_queues),
       allocator_(std::move(allocator)),
       planner_(std::move(planner)),
-      traffic_(config.features),
+      traffic_(trafficRules(config)),
       faults_(config.faults),
       plans_(static_cast<size_t>(world_.fleetSize())) {
   if (!allocator_ || !planner_) {
@@ -83,9 +88,37 @@ TickOutput FleetManager::tick(const TickInput& input) {
   TickOutput output;
   world_.setNow(input.now);
   for (const RobotReport& report : input.reports) world_.applyReport(report);
+  bool cells_changed = false;
   for (const CellObservation& observation : input.observations) {
-    world_.applyObservation(observation);
+    if (!observation.cleared.empty()) {
+      world_.applyObservation(CellObservation{observation.stamp, {}, observation.cleared});
+      for (std::vector<Cell>& closure : pending_closures_) {
+        closure.erase(std::remove_if(closure.begin(), closure.end(),
+                                     [&](const Cell& c) {
+                                       return std::find(observation.cleared.begin(),
+                                                        observation.cleared.end(),
+                                                        c) != observation.cleared.end();
+                                     }),
+                      closure.end());
+      }
+      cells_changed = true;
+    }
+    if (!observation.blocked.empty()) pending_closures_.push_back(observation.blocked);
   }
+  // A closure takes effect once no robot stands on any of its cells, as on the floor: closing
+  // the cells around a robot would leave it no way out.
+  for (auto it = pending_closures_.begin(); it != pending_closures_.end();) {
+    if (!it->empty() && onClosedCells(*it)) {
+      ++it;
+      continue;
+    }
+    if (!it->empty()) {
+      world_.applyObservation(CellObservation{input.now, *it, {}});
+      cells_changed = true;
+    }
+    it = pending_closures_.erase(it);
+  }
+  if (cells_changed) onCellsChanged(input.now);
 
   const FaultActions faults = faults_.update(input.now, world_, tasks_);
   output.stats.robots_declared_dead = static_cast<int32_t>(faults.declared_dead.size());
@@ -96,8 +129,44 @@ TickOutput FleetManager::tick(const TickInput& input) {
   confirmProgress(input.now);
   allocate(input.now, output);
   plan(input.now, computeGoals(), output.stats);
-  output.commands = commands(input.now);
+  const TrafficDecision traffic = traffic_.decide(world_, priorities(input.now));
+  if (config_.features.deadlock_recovery && isCoordinated(config_.planning.method) &&
+      !traffic.cycles.empty()) {
+    recover(input.now, traffic.cycles, output.stats);
+  }
+  output.commands = commands(input.now, traffic);
   return output;
+}
+
+bool FleetManager::onClosedCells(const std::vector<Cell>& cells) const {
+  return std::any_of(world_.robots().begin(), world_.robots().end(), [&](const RobotBelief& b) {
+    return std::find(cells.begin(), cells.end(), b.cell) != cells.end();
+  });
+}
+
+// A closed or reopened cell changes distances and can cut planned paths. The distance table is
+// rebuilt around closed cells, then robots replan: the baseline replans each robot whose path now
+// crosses a closed cell; coordinated planners replan the whole fleet at once, so the new plans fit
+// together.
+void FleetManager::onCellsChanged(Timestep now) {
+  distances_ = DistanceOracle(world_.map(), config_.features.distance_oracle);
+  if (!isCoordinated(config_.planning.method)) {
+    for (const RobotBelief& b : world_.robots()) {
+      RobotPlan& p = plans_[static_cast<size_t>(b.id)];
+      if (!p.valid) continue;
+      const auto from = static_cast<size_t>(pathProgress(b, p.plan_id, p.path.cells));
+      for (size_t k = from + 1; k < p.path.cells.size(); ++k) {
+        if (world_.map().isBlocked(p.path.cells[k])) {
+          p.valid = false;
+          break;
+        }
+      }
+    }
+  } else if (config_.features.rolling_replanning) {
+    next_replan_ = now;
+  } else {
+    for (RobotPlan& p : plans_) p.valid = false;
+  }
 }
 
 // Reports are state, not events: a delivery stays in last_completed until the next one, so a
@@ -332,13 +401,44 @@ std::vector<Path> FleetManager::fixedPaths(const std::vector<PlanAgent>& agents)
                                        [&](const PlanAgent& a) { return a.robot == b.id; });
     if (replanned) continue;
     const RobotPlan& p = plans_[static_cast<size_t>(b.id)];
-    fixed.push_back(p.path.cells.empty() ? Path{b.id, world_.now(), {b.cell}} : p.path);
+    if (p.path.cells.empty()) {
+      fixed.push_back(Path{b.id, world_.now(), {b.cell}});
+      continue;
+    }
+    // The rest of its plan from where it really is, starting now: a late robot keeps its place in
+    // line instead of being assumed further along. On schedule, this is the plan itself. A plan
+    // committed in this tick (a robot told to hold) starts where the robot is.
+    const auto from = static_cast<std::ptrdiff_t>(pathProgress(b, p.plan_id, p.path.cells));
+    fixed.push_back(Path{b.id, world_.now(),
+                         std::vector<Cell>(p.path.cells.begin() + from, p.path.cells.end())});
   }
   return fixed;
 }
 
-std::vector<RobotCommand> FleetManager::commands(Timestep now) const {
-  const std::vector<int32_t> permits = traffic_.permits(world_);
+std::vector<int32_t> FleetManager::priorities(Timestep now) const {
+  std::vector<int32_t> out(plans_.size(), -1);
+  for (const RobotBelief& b : world_.robots()) {
+    out[static_cast<size_t>(b.id)] = agent(b, b.cell, now).priority;
+  }
+  return out;
+}
+
+// Held robots that wait for each other in a cycle cannot move until a plan changes. Rolling
+// replanning brings its next replanning forward to the next tick. Replanning to goals replans the
+// whole fleet together at the next tick: the robots on the cycle alone may find no way out around
+// the others' plans, and then the same failing call would repeat forever.
+void FleetManager::recover(Timestep now, const std::vector<std::vector<RobotId>>& cycles,
+                           TickStats& stats) {
+  if (config_.features.rolling_replanning) {
+    next_replan_ = std::min(next_replan_, now + 1);
+  } else {
+    for (RobotPlan& p : plans_) p.valid = false;
+  }
+  stats.deadlocks_resolved += static_cast<int32_t>(cycles.size());
+}
+
+std::vector<RobotCommand> FleetManager::commands(Timestep now,
+                                                 const TrafficDecision& traffic) const {
   std::vector<RobotCommand> out;
   for (const RobotBelief& b : world_.robots()) {
     if (b.status == RobotStatus::kDead) continue;
@@ -349,7 +449,8 @@ std::vector<RobotCommand> FleetManager::commands(Timestep now) const {
     command.plan_id = p.plan_id;
     command.issued_at = now;
     command.path = p.path.cells;
-    command.permitted_until = std::max(permits[i], 0);
+    command.permitted_until = std::max(traffic.permits[i].until, 0);
+    command.follow = traffic.permits[i].follow;
     if (const auto task_id = tasks_.taskOf(b.id)) command.task = tasks_.get(*task_id).order;
     out.push_back(std::move(command));
   }

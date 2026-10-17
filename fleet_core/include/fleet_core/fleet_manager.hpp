@@ -49,8 +49,7 @@ struct TickOutput {
 
 // Why a config cannot run its planner, or nullopt when it can. Coordinated planners need station
 // queues and parking, so that no two robots share a goal and idle robots wait off the aisles;
-// windowed_coop_astar and pibt plan a window ahead, so they need rolling replanning; and robots
-// that run late break conflict-free plans until Stage 5 adds the execution dependency graph.
+// windowed_coop_astar and pibt plan a window ahead, so they need rolling replanning.
 std::optional<std::string> planningRequirementGap(const Config& config);
 
 // Central coordinator. Orchestrates the decision components and holds no algorithm itself.
@@ -60,7 +59,9 @@ std::optional<std::string> planningRequirementGap(const Config& config);
 // InvariantChecker), so the system under test never grades itself.
 //
 // tick() pipeline:
-//   1. world       accept reports and cell observations
+//   1. world       accept reports and cell observations. A closure takes effect once no robot
+//                  stands on any of its cells, as on the floor. A closed or reopened cell
+//                  rebuilds the distance table and triggers replanning (see onCellsChanged).
 //   2. faults      expire heartbeat leases (recovery lands in Stage 6)
 //   3. tasks       add new orders; confirm pickups and deliveries from reports
 //   4. allocation  assign pending tasks to robots without one
@@ -69,8 +70,10 @@ std::optional<std::string> planningRequirementGap(const Config& config);
 //                  there just hold. Coordinated planners with rolling replanning: every
 //                  planning.replan_period steps, replan every robot not at a station's service,
 //                  planning.window steps ahead (rolling horizon). Without it: replan robots
-//                  whose goal changed, all the way there, around the others' plans.
-//   7. traffic     turn committed plans into motion permits
+//                  whose goal changed, all the way there, around where the others really are on
+//                  their plans.
+//   7. traffic     motion permits from the traffic rules (TrafficManager). Held robots that wait
+//                  for each other in a cycle get replanned (features.deadlock_recovery).
 //   8. output      one command per robot believed alive
 //
 // A failed coordinated call keeps every committed plan, which stays conflict-free with the
@@ -103,6 +106,8 @@ class FleetManager {
     Path path{};
   };
 
+  bool onClosedCells(const std::vector<Cell>& cells) const;
+  void onCellsChanged(Timestep now);
   void confirmProgress(Timestep now);
   void allocate(Timestep now, TickOutput& output);
   std::vector<Cell> computeGoals();
@@ -116,7 +121,9 @@ class FleetManager {
   void commit(RobotId robot, const Cell& goal, Path path, bool valid,
               std::vector<CommittedPlan>& committed);
   std::vector<Path> fixedPaths(const std::vector<PlanAgent>& agents) const;
-  std::vector<RobotCommand> commands(Timestep now) const;
+  std::vector<int32_t> priorities(Timestep now) const;
+  void recover(Timestep now, const std::vector<std::vector<RobotId>>& cycles, TickStats& stats);
+  std::vector<RobotCommand> commands(Timestep now, const TrafficDecision& traffic) const;
 
   Config config_;
   WorldModel world_;
@@ -130,6 +137,7 @@ class FleetManager {
   FaultManager faults_;
   std::vector<RobotPlan> plans_;  // index == RobotId
   Timestep next_replan_{0};       // rolling horizon: first step of the next replanning
+  std::vector<std::vector<Cell>> pending_closures_{};  // waiting for their cells to empty
 };
 
 }  // namespace fleet_core

@@ -39,6 +39,7 @@ void RunStats::mix(int64_t value) {
 void RunStats::recordOrders(const std::vector<Task>& orders) {
   for (const Task& task : orders) {
     created_at_[task.order.id] = task.created_at;
+    open_[task.order.id] = task.created_at;
     ++orders_created_;
   }
 }
@@ -63,9 +64,11 @@ void RunStats::recordStep(const StepTruth& step, const TruthSnapshot& after,
   }
 
   delivered_total_ += static_cast<int64_t>(step.deliveries.size());
+  for (const Assignment& d : step.deliveries) open_.erase(d.task);
   expansions_ += tick.expansions;
   if (tick.planner_called) planning_ms_.push_back(tick.planning_ms);
   if (tick.planner_failed) ++planner_failures_;
+  deadlocks_resolved_ += tick.deadlocks_resolved;
   if (step.t < warmup_) return;
 
   delivered_steady_ += static_cast<int64_t>(step.deliveries.size());
@@ -80,6 +83,9 @@ void RunStats::recordStep(const StepTruth& step, const TruthSnapshot& after,
     const MotionOutcome o = step.motion[i].outcome;
     if (isSafetyStop(o)) ++conflicts_;
     if (isSafetyStop(o) || o == MotionOutcome::kPlannedWait) ++congestion_steps_;
+    if (o == MotionOutcome::kDelayed) ++delayed_steps_;
+    if (o == MotionOutcome::kYield) ++yields_;
+    if (o == MotionOutcome::kNoPermit) ++traffic_holds_;
   }
 }
 
@@ -113,6 +119,16 @@ RunSummary RunStats::summarize(const Config& config, Timestep steps_run, double 
   s.planning_p95_ms = percentile(planning_ms_, 0.95);
   s.expansions = expansions_;
   s.planner_failures = planner_failures_;
+  s.delayed_steps = delayed_steps_;
+  s.yields = yields_;
+  s.traffic_holds = traffic_holds_;
+  s.deadlocks_resolved = deadlocks_resolved_;
+  if (!completion_steps_.empty()) {
+    s.max_completion_steps = *std::max_element(completion_steps_.begin(), completion_steps_.end());
+  }
+  for (const auto& [task, created] : open_) {
+    s.oldest_open_steps = std::max(s.oldest_open_steps, steps_run - created);
+  }
   s.violations = violations;
   s.aborted = aborted;
   s.log_hash = hash_;

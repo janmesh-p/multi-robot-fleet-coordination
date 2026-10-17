@@ -51,8 +51,8 @@ faults:
   events: []
   # Examples:
   #   - {at: 500, type: robot_death, robot: 0}
-  #   - {at: 800, type: block_cells, cells: [[5, 9], [5, 10]]}
-  #   - {at: 1200, type: unblock_cells, cells: [[5, 9], [5, 10]]}
+  #   - {at: 800, type: block_cells, cells: [[7, 9], [7, 10]]}
+  #   - {at: 1200, type: unblock_cells, cells: [[7, 9], [7, 10]]}
   #   - {at: 900, type: comm_outage, robot: 3, duration: 20}
 
 features:                     # one switch per feature, for ablations

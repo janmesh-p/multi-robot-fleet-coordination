@@ -1,4 +1,5 @@
 #include <stdexcept>
+#include <utility>
 #include <vector>
 
 #include <gtest/gtest.h>
@@ -33,6 +34,10 @@ MotionOutcome outcome(const GridExecutor& e, RobotId robot) {
 
 Cell cellOf(const GridExecutor& e, RobotId robot) {
   return e.robots().at(static_cast<size_t>(robot)).cell;
+}
+
+const MotionRecord& lastStepOf(const GridExecutor& e, RobotId robot) {
+  return e.lastStep().motion.at(static_cast<size_t>(robot));
 }
 
 TEST(GridExecutor, FollowingIntoAVacatedCellIsAllowed) {
@@ -91,7 +96,8 @@ TEST(GridExecutor, WaitsPermitsAndHolds) {
   e.step(1);
   EXPECT_EQ(outcome(e, 0), MotionOutcome::kMoved);
   e.step(2);
-  EXPECT_EQ(outcome(e, 0), MotionOutcome::kHold);  // permit ends at index 2
+  EXPECT_EQ(outcome(e, 0), MotionOutcome::kNoPermit);  // permit ends at index 2, path goes on
+  EXPECT_EQ(lastStepOf(e, 0).intended, (Cell{2, 2}));
   EXPECT_EQ(cellOf(e, 0), (Cell{2, 1}));
   e.dispatch(3,
              {command(0, 0, {{2, 0}, {2, 0}, {2, 1}, {2, 2}}, task, 3)});  // same plan, more permit
@@ -211,6 +217,68 @@ TEST(GridExecutor, DelaysAreSeededAndKeepTheirStreamAligned) {
   for (const MotionOutcome o : a) delayed += o == MotionOutcome::kDelayed ? 1 : 0;
   EXPECT_GT(delayed, 0);
   EXPECT_LT(delayed, 12);
+}
+
+// A robot told to follow the robot ahead waits behind it when that robot stays: a yield, not a
+// safety stop. The same stop without the instruction, or behind another robot, is a safety stop.
+TEST(GridExecutor, AFollowerYieldsWhenTheRobotAheadStays) {
+  const auto run = [](RobotId follow, Cell ahead) {
+    GridExecutor e(openMap(), {ahead, {2, 0}}, 2, 0.0, 1);
+    RobotCommand lead = command(0, 0, {ahead, {ahead.row, ahead.col + 1}}, std::nullopt, 0);
+    RobotCommand follower = command(1, 0, {{2, 0}, {2, 1}});
+    follower.follow = follow;
+    e.dispatch(0, {lead, follower});
+    e.step(0);
+    return std::make_pair(outcome(e, 0), outcome(e, 1));
+  };
+  EXPECT_EQ(run(0, {2, 1}), std::make_pair(MotionOutcome::kNoPermit, MotionOutcome::kYield));
+  EXPECT_EQ(run(-1, {2, 1}).second, MotionOutcome::kBlockedOccupied);
+  EXPECT_FALSE(isSafetyStop(MotionOutcome::kYield));
+
+  // The robot ahead moves: the follower moves with it.
+  GridExecutor e(openMap(), {{2, 1}, {2, 0}}, 2, 0.0, 1);
+  RobotCommand follower = command(1, 0, {{2, 0}, {2, 1}});
+  follower.follow = 0;
+  e.dispatch(0, {command(0, 0, {{2, 1}, {2, 2}}), follower});
+  e.step(0);
+  EXPECT_EQ(outcome(e, 0), MotionOutcome::kMoved);
+  EXPECT_EQ(outcome(e, 1), MotionOutcome::kMoved);
+}
+
+// A closure takes an empty cell at once and an occupied one once its robot has left. Nobody
+// enters a closed or closing cell, and reopening cancels a closure still waiting.
+// A closure waits while any robot stands on any of its cells, then they all close together. A
+// robot inside a closing segment drives out through it: closing the cell next to it first would
+// leave it no way out.
+TEST(GridExecutor, AClosureWaitsUntilItsCellsAreEmpty) {
+  GridExecutor e(openMap(), {{1, 1}, {1, 3}, {3, 0}}, 2, 0.0, 1);
+  e.block({{1, 1}, {1, 2}});  // robot 0 stands on (1,1)
+  e.block({{3, 0}});          // robot 2 stands on (3,0)
+  e.block({{0, 4}});          // nobody there: closed at once
+  EXPECT_TRUE(e.closing({1, 1}));
+  EXPECT_TRUE(e.closing({1, 2}));
+  EXPECT_FALSE(e.map().isBlocked({1, 1}));
+  EXPECT_FALSE(e.map().isBlocked({1, 2}));  // waits with the rest of its closure
+  EXPECT_TRUE(e.map().isBlocked({0, 4}));
+  e.unblock({{3, 0}});  // robot 2 never left: its cell never closed
+  EXPECT_FALSE(e.closing({3, 0}));
+
+  e.dispatch(0, {command(0, 0, {{1, 1}, {1, 2}, {1, 3}, {1, 2}}), command(1, 0, {{1, 3}, {0, 3}})});
+  e.step(0);
+  EXPECT_EQ(outcome(e, 0), MotionOutcome::kMoved);  // through its own closure, still open
+  EXPECT_EQ(outcome(e, 1), MotionOutcome::kMoved);
+  EXPECT_FALSE(e.map().isBlocked({1, 1}));  // robot 0 is still inside
+  e.step(1);
+  EXPECT_EQ(outcome(e, 0), MotionOutcome::kMoved);
+  EXPECT_TRUE(e.map().isBlocked({1, 1}));  // out, so both cells close
+  EXPECT_TRUE(e.map().isBlocked({1, 2}));
+  e.step(2);
+  EXPECT_EQ(outcome(e, 0), MotionOutcome::kBlockedCell);  // no robot enters a closed cell
+  EXPECT_FALSE(isSafetyStop(MotionOutcome::kBlockedCell));
+  e.unblock({{1, 1}, {1, 2}});
+  e.step(3);
+  EXPECT_EQ(outcome(e, 0), MotionOutcome::kMoved);
+  EXPECT_THROW(e.block({{9, 9}}), std::out_of_range);
 }
 
 TEST(GridExecutor, ReportsCountUpAndSpawnIsChecked) {

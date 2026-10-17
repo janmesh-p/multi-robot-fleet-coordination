@@ -20,6 +20,10 @@ robot-order pairs), and differ only in the cost of a pair:
 | `cost_aware` | `dist_to_pickup + congestion_weight * (robots_in_box + service_steps * pickup_assigned)`, a hand-tuned congestion penalty; plain `dist_to_pickup` when `features.congestion_cost` is off |
 | `learned` | a model's prediction of the steps the robot will really need to reach the pickup, traffic and station queues included |
 
+From Stage 5 all three share a starvation guard (`features.starvation_guard`, on by default):
+orders that have waited more than 600 steps are matched first, oldest first, and the other
+orders after them. The cost of a pair still decides which robot takes each order.
+
 The learning track builds the `learned` cost: a small regression model trained on logged runs.
 The question: on seeds the model never saw, does it deliver more orders per hour than the
 hand-tuned cost? Either answer is a result, and both get reported the same way.
@@ -31,7 +35,8 @@ hand-tuned cost? Either answer is a result, and both get reported the same way.
 | 2 (done) | `run_sim` and `run_sweep`, with `nearest` allocation and `independent_astar` planning only. Every run deadlocks within minutes. No per-order log yet. |
 | 3 (done) | Allocators `hungarian`, `cost_aware`, `learned`; config key `allocation.model_file`; `assignments.csv` in every run directory; the `predict_cost` tool. Planning is still `independent_astar`, so runs still deadlock. Use this data to test your plumbing, not to train. |
 | 4 (done) | Coordinated planners, including `pibt`. With `pibt` the fleet keeps moving: no frozen run and no safety stop in its 69 runs of the planning benchmark in README.md. One rule changed with them: a robot whose station has no free waiting cell waits at home instead of where it stands. This is the first data worth training on. |
-| 5, 6 | Traffic rules, then faults. Both change how robots move, so recollect, retrain, and rerun the evaluation after each one lands. |
+| 5 (done) | Traffic rules that keep plans safe when robots run late (`execution.delay_probability`), aisle closures (`block_cells` and `unblock_cells` events), and the starvation guard (section 1). Under heavy load the guard changes which pairs get chosen, and `dist_to_pickup` now routes around closed cells. No column or config key changed. Recollect, retrain, and rerun the evaluation (section 11). |
+| 6 | Faults. They change how robots move, so recollect, retrain, and rerun the evaluation after it lands. |
 
 The README Stages table says which stages have landed.
 
@@ -70,7 +75,7 @@ before it makes any assignment in that tick. Three terms:
 
 | Column | Meaning |
 |---|---|
-| `dist_to_pickup` | shortest-path steps from the robot's cell to the pickup on the static map, ignoring other robots. A path may start or end on a station or parking cell but never pass through one, the same rule the planners follow. Manhattan distance when `features.distance_oracle` is off. |
+| `dist_to_pickup` | shortest-path steps from the robot's cell to the pickup, ignoring other robots, around the cells closed at step `t` (Stage 5; without closures, the static map). A path may start or end on a station or parking cell but never pass through one, the same rule the planners follow. Manhattan distance when `features.distance_oracle` is off. |
 | `manhattan_to_pickup` | absolute row difference plus absolute column difference |
 | `dist_pickup_to_dropoff` | shortest-path steps from the pickup to the dropoff, same rule as `dist_to_pickup` |
 | `robot_row`, `robot_col` | the robot's cell |
@@ -102,9 +107,10 @@ These come from ground truth, recorded as the run goes.
 What the core guarantees, so your tests can rely on it:
 
 - A robot that nothing slows down has `steps_to_pickup` equal to `dist_to_pickup`. Anything above
-  that is traffic and queueing. So `steps_to_pickup >= dist_to_pickup` on every row where
-  `steps_to_pickup` is not -1, as long as no robot reports are lost (`faults.packet_loss: 0`
-  and no `comm_outage` events, the default). In the example row, the robot lost 6 steps.
+  that is traffic, queueing, and missed steps. So `steps_to_pickup >= dist_to_pickup` on every
+  row where `steps_to_pickup` is not -1, as long as no robot reports are lost
+  (`faults.packet_loss: 0` and no `comm_outage` events) and no closed cell reopens on the way
+  (no `unblock_cells` event), the defaults. In the example row, the robot lost 6 steps.
 - `available_robots + busy_robots == alive_robots` on every row.
 - An order requeued after its robot dies (Stage 6) ends that row as `requeued` and gets a new row
   when it is assigned again.
@@ -299,6 +305,10 @@ every command from the repo root.
   `positions.csv`, run metadata (fleet size, arrival rate, allocator), or any other source: the
   C++ side cannot compute those at decision time, so the deployed model would see different
   inputs than it trained on. Run metadata is for filtering and grouping only.
+- From the Stage 5 rerun on, `order_age` is not a model input. It is the same for every robot
+  that could take an order, so it cannot say which robot gets there first. It can only move
+  orders up or down the queue, and old orders tend to wait at busy pickups, so a model that reads
+  it learns to push them back. The C++ side still accepts it, so Stage 4 models still load.
 - No network access in code or tests. The unit tests finish in under 60 seconds.
 - Notebooks are fine for exploring, but never the source of a reported number.
 
@@ -340,8 +350,8 @@ first 12 characters of `git rev-parse HEAD`. Data from different stages never mi
 | `orders.arrival_rate` | 0.05, 0.1, 0.2 |
 | `run.name` | `collect_<method>_r<rate x 100, three digits>`, for example `collect_hungarian_r010` |
 
-Name closed-loop configs the same way: `tune_cost_aware_w050_r020` (weight times 100, three
-digits), `tune_learned_<model>_r020` (`<model>` is the model file name without `.json`),
+Name closed-loop configs the same way: `tune_cost_aware_w050_r020` (weight times 100, at least
+three digits), `tune_learned_<model>_r020` (`<model>` is the model file name without `.json`),
 `final_learned_r010`.
 
 Logging with three allocators spreads the data over different robot-order choices. The `learned`
@@ -407,7 +417,8 @@ Offline accuracy is a means. Orders delivered per hour is the result.
 
 1. Tuning, on seeds 2000-2009, fleets 5, 10, and 25, arrival rates 0.1 and 0.2, and
    `planning.method: pibt`:
-   - `cost_aware`: try `allocation.congestion_weight` 0.25, 0.5, 1, 2, and 4. Keep the weight
+   - `cost_aware`: try `allocation.congestion_weight` 1, 2, 4, 8, and 16 (the Stage 4 round
+     tried 0.25 to 4). Keep the weight
      with the highest mean `orders_per_hour` over all tuning runs. The hand-tuned baseline gets
      the same tuning budget as your model.
    - `learned`: try at most 5 exported models. Keep the one with the highest mean
@@ -478,8 +489,8 @@ jobs:
   python:
     runs-on: ubuntu-22.04
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
+      - uses: actions/checkout@v5
+      - uses: actions/setup-python@v6
         with:
           python-version: "3.12"  # the same version as on your machine
       - name: Install
@@ -524,8 +535,11 @@ plumbing collection with `independent_astar` on seeds 3000-3004.
 When Stage 4 lands: collect with `pibt`, train, run the offline evaluation, then closed-loop
 tuning and the final runs. Write `learning/README.md`.
 
-After Stages 5 and 6: recollect, retrain, rerun the final evaluation with the same protocol, and
-update the write-up. Optional, in this order:
+When Stage 5 lands: recollect with `pibt` on the new commit, retrain without `order_age`, tune
+`cost_aware` on the new grid (section 9), rerun the final evaluation with the same protocol, and
+update the write-up. Report the Stage 4 round and this one side by side.
+
+After Stage 6: the same again. Optional, in this order:
 
 1. One more collection round with `learned` added to the allocator grid, then retrain. Data from
    the model's own choices shrinks the selection bias. Report both rounds.

@@ -60,6 +60,22 @@ TEST(DistanceOracle, SymmetricOnAGeneratedMap) {
   }
 }
 
+// A closed cell is never entered, though a path may start on one (a robot leaving a cell that
+// closed under it). Rebuilt around closures, the table stays exact.
+TEST(DistanceOracle, ClosedCellsCanBeLeftButNeverEntered) {
+  GridMap m = GridMap::fromString(
+      ".....\n"
+      ".....\n");
+  m.block({0, 2});
+  const DistanceOracle d(m, true);
+  EXPECT_EQ(d.distance({0, 0}, {0, 4}), 6);  // around through row 1
+  EXPECT_EQ(d.distance({0, 2}, {0, 4}), 2);
+  EXPECT_EQ(d.distance({0, 0}, {0, 2}), DistanceOracle::kUnreachable);
+  EXPECT_EQ(d.distance({0, 2}, {0, 2}), 0);
+  const DistanceOracle manhattan(m, false);  // the ablation ignores closures
+  EXPECT_EQ(manhattan.distance({0, 0}, {0, 4}), 4);
+}
+
 TEST(DistanceOracle, RefusesMapsTooLargeForTheTable) {
   std::string open;
   for (int r = 0; r < 70; ++r) open += std::string(70, '.') + "\n";

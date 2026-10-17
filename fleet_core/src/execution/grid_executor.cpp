@@ -35,6 +35,10 @@ std::string_view toString(MotionOutcome outcome) {
       return "invalid_step";
     case MotionOutcome::kDead:
       return "dead";
+    case MotionOutcome::kYield:
+      return "yield";
+    case MotionOutcome::kNoPermit:
+      return "no_permit";
   }
   return "unknown";
 }
@@ -47,6 +51,7 @@ bool isSafetyStop(MotionOutcome outcome) {
 GridExecutor::GridExecutor(GridMap map, const std::vector<Cell>& spawn, Timestep service_steps,
                            double delay_probability, uint64_t delay_seed)
     : map_(std::move(map)),
+      pending_block_(static_cast<size_t>(map_.cellCount()), 0),
       service_steps_(service_steps),
       delay_probability_(delay_probability),
       delay_rng_(delay_seed) {
@@ -100,12 +105,14 @@ void GridExecutor::dispatch(Timestep /*now*/, const std::vector<RobotCommand>& c
         r.path = {r.cell};
         r.path_index = 0;
         r.permitted_until = 0;
+        r.follow = -1;
         continue;
       }
       r.path = command.path;
       r.path_index = static_cast<int32_t>(on_path - command.path.begin());
     }
     r.permitted_until = command.permitted_until;
+    r.follow = command.follow;
     // Adopt a task only when free. Reassignment while busy is Stage 6 (false deaths).
     if (command.task && !r.task) {
       r.task = command.task;
@@ -144,9 +151,15 @@ void GridExecutor::step(Timestep now) {
       m.outcome = MotionOutcome::kService;
       continue;
     }
-    const int32_t limit = std::min(r.permitted_until, static_cast<int32_t>(r.path.size()) - 1);
+    const auto last = static_cast<int32_t>(r.path.size()) - 1;
+    const int32_t limit = std::min(r.permitted_until, last);
     if (r.path_index >= limit) {
-      m.outcome = r.task ? MotionOutcome::kHold : MotionOutcome::kIdle;
+      if (r.path_index < last) {  // the path goes on, the permit does not
+        m.intended = r.path[static_cast<size_t>(r.path_index + 1)];
+        m.outcome = MotionOutcome::kNoPermit;
+      } else {
+        m.outcome = r.task ? MotionOutcome::kHold : MotionOutcome::kIdle;
+      }
       continue;
     }
     const Cell next = r.path[static_cast<size_t>(r.path_index + 1)];
@@ -206,14 +219,15 @@ void GridExecutor::step(Timestep now) {
     }
   }
   // A robot cannot enter a cell whose occupant stays. Every new stop can block the robot behind
-  // it, so repeat until nothing changes (at most n rounds).
+  // it, so repeat until nothing changes (at most n rounds). A robot told to follow that occupant
+  // yields instead: the coordinator allowed the move only if the occupant left.
   for (bool changed = true; changed;) {
     changed = false;
     for (size_t i = 0; i < n; ++i) {
       if (mover[i] == 0) continue;
       const int32_t j = occupant[static_cast<size_t>(map_.index(target[i]))];
       if (j >= 0 && static_cast<size_t>(j) != i && mover[static_cast<size_t>(j)] == 0) {
-        stop(i, MotionOutcome::kBlockedOccupied);
+        stop(i, robots_[i].follow == j ? MotionOutcome::kYield : MotionOutcome::kBlockedOccupied);
         changed = true;
       }
     }
@@ -227,7 +241,20 @@ void GridExecutor::step(Timestep now) {
     last_.motion[i].to = target[i];
   }
 
-  // 4. Stations. Robots that were already servicing count down; robots whose path ends on their
+  // 4. Closures whose cells have emptied.
+  for (auto it = pending_.begin(); it != pending_.end();) {
+    if (occupied(*it)) {
+      ++it;
+      continue;
+    }
+    for (const int32_t c : *it) {
+      map_.block(map_.cellAt(c));
+      pending_block_[static_cast<size_t>(c)] = 0;
+    }
+    it = pending_.erase(it);
+  }
+
+  // 5. Stations. Robots that were already servicing count down; robots whose path ends on their
   //    station start service.
   for (size_t i = 0; i < n; ++i) {
     SimRobot& r = robots_[i];
@@ -246,6 +273,45 @@ void GridExecutor::step(Timestep now) {
       if (r.service_left <= 0) finishService(static_cast<RobotId>(i));
     }
   }
+}
+
+bool GridExecutor::occupied(const std::vector<int32_t>& cells) const {
+  return std::any_of(robots_.begin(), robots_.end(), [&](const SimRobot& r) {
+    return std::find(cells.begin(), cells.end(), map_.index(r.cell)) != cells.end();
+  });
+}
+
+void GridExecutor::block(const std::vector<Cell>& cells) {
+  std::vector<int32_t> closure;
+  for (const Cell& cell : cells) {
+    if (!map_.inBounds(cell)) throw std::out_of_range("GridExecutor: closure outside the map");
+    closure.push_back(map_.index(cell));
+  }
+  if (!occupied(closure)) {
+    for (const Cell& cell : cells) map_.block(cell);
+    return;
+  }
+  for (const int32_t c : closure) pending_block_[static_cast<size_t>(c)] = 1;
+  pending_.push_back(std::move(closure));
+}
+
+void GridExecutor::unblock(const std::vector<Cell>& cells) {
+  for (const Cell& cell : cells) {
+    map_.unblock(cell);  // throws std::out_of_range outside the map
+    const int32_t c = map_.index(cell);
+    pending_block_[static_cast<size_t>(c)] = 0;
+    for (std::vector<int32_t>& closure : pending_) {
+      closure.erase(std::remove(closure.begin(), closure.end(), c), closure.end());
+    }
+  }
+  pending_.erase(
+      std::remove_if(pending_.begin(), pending_.end(),
+                     [](const std::vector<int32_t>& closure) { return closure.empty(); }),
+      pending_.end());
+}
+
+bool GridExecutor::closing(const Cell& c) const {
+  return map_.isBlocked(c) || pending_block_[static_cast<size_t>(map_.index(c))] != 0;
 }
 
 void GridExecutor::finishService(RobotId id) {

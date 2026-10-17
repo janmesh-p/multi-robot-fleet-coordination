@@ -2,12 +2,17 @@
 
 #include <algorithm>
 #include <chrono>
+#include <cstddef>
+#include <deque>
+#include <optional>
+#include <set>
 #include <stdexcept>
 #include <string>
 #include <utility>
 
 #include "fleet_core/common/rng.hpp"
 #include "fleet_core/execution/grid_executor.hpp"
+#include "fleet_core/faults/fault_injector.hpp"
 #include "fleet_core/fleet_manager.hpp"
 #include "fleet_core/metrics/metrics_collector.hpp"
 #include "fleet_core/tasks/order_generator.hpp"
@@ -27,6 +32,78 @@ GridMap buildMap(const MapConfig& map) {
 
 [[noreturn]] void unsupported(const std::string& what) {
   throw std::runtime_error("scenario: " + what);
+}
+
+std::string cellText(const Cell& c) {
+  return "[" + std::to_string(c.row) + ", " + std::to_string(c.col) + "]";
+}
+
+// With `closed` shut, the open aisle cells form one connected region and every station and
+// parking cell touches it, so every goal stays reachable.
+bool aislesHold(const GridMap& map, const std::set<Cell>& closed) {
+  const auto open = [&](const Cell& c) {
+    return map.inBounds(c) && map.kind(c) == '.' && closed.count(c) == 0;
+  };
+  std::vector<Cell> cells;
+  for (int32_t i = 0; i < map.cellCount(); ++i) {
+    if (open(map.cellAt(i))) cells.push_back(map.cellAt(i));
+  }
+  if (cells.empty()) return false;
+  std::set<Cell> seen{cells.front()};
+  std::deque<Cell> queue{cells.front()};
+  constexpr int32_t kDr[4] = {-1, 1, 0, 0};
+  constexpr int32_t kDc[4] = {0, 0, -1, 1};
+  while (!queue.empty()) {
+    const Cell c = queue.front();
+    queue.pop_front();
+    for (int dir = 0; dir < 4; ++dir) {
+      const Cell next{c.row + kDr[dir], c.col + kDc[dir]};
+      if (open(next) && seen.insert(next).second) queue.push_back(next);
+    }
+  }
+  if (seen.size() != cells.size()) return false;
+  for (int32_t i = 0; i < map.cellCount(); ++i) {
+    const Cell c = map.cellAt(i);
+    if (!map.isEndpoint(c)) continue;
+    bool touches = false;
+    for (int dir = 0; dir < 4; ++dir) {
+      touches = touches || open(Cell{c.row + kDr[dir], c.col + kDc[dir]});
+    }
+    if (!touches) return false;
+  }
+  return true;
+}
+
+// Closures (faults.events block_cells and unblock_cells) may close aisle cells only, and after
+// every closure the open aisles must still reach every station and parking cell.
+std::optional<std::string> closureGap(const GridMap& map, const std::vector<FaultEvent>& events) {
+  std::vector<size_t> order(events.size());
+  for (size_t i = 0; i < order.size(); ++i) order[i] = i;
+  std::stable_sort(order.begin(), order.end(),
+                   [&](size_t a, size_t b) { return events[a].at < events[b].at; });
+  std::set<Cell> closed;
+  for (const size_t i : order) {
+    const FaultEvent& e = events[i];
+    const bool blocks = e.type == FaultType::kBlockCells;
+    if (!blocks && e.type != FaultType::kUnblockCells) continue;
+    const std::string what = "faults.events[" + std::to_string(i) + "] (" +
+                             std::string(toString(e.type)) + " at step " + std::to_string(e.at) +
+                             ")";
+    for (const Cell& c : e.cells) {
+      if (!map.inBounds(c) || map.kind(c) != '.') {
+        return what + ": cell " + cellText(c) + " is not an aisle cell ('.')";
+      }
+      if (blocks) {
+        closed.insert(c);
+      } else {
+        closed.erase(c);
+      }
+    }
+    if (blocks && !aislesHold(map, closed)) {
+      return what + " would cut the open aisles apart or shut a station or parking cell off";
+    }
+  }
+  return std::nullopt;
 }
 
 // Robots start at their home parking cells. Without enough parking (only allowed with
@@ -70,14 +147,17 @@ Simulation::Simulation(const Config& config) : config_(config), map_(buildMap(co
   if (config_.faults.packet_loss > 0.0) unsupported("faults.packet_loss arrives in Stage 6");
   for (const FaultEvent& e : config_.faults.events) {
     const bool cells = e.type == FaultType::kBlockCells || e.type == FaultType::kUnblockCells;
-    unsupported(std::string("faults.events type ") + std::string(toString(e.type)) +
-                (cells ? " arrives in Stage 5" : " arrives in Stage 6"));
+    if (!cells) {
+      unsupported(std::string("faults.events type ") + std::string(toString(e.type)) +
+                  " arrives in Stage 6");
+    }
   }
 
   if (map_.pickups().empty() || map_.dropoffs().empty()) {
     unsupported("the map needs at least one pickup 'P' and one dropoff 'D' station");
   }
   if (!isConnected(map_)) unsupported("the map's free cells are not all connected");
+  if (const auto gap = closureGap(map_, config_.faults.events)) unsupported(*gap);
   spawn_ = placeFleet(config_, map_);
 
   const auto bridges = findBridges(map_);
@@ -93,16 +173,22 @@ Simulation::Simulation(const Config& config) : config_(config), map_(buildMap(co
   }
   std::vector<std::string> inert;
   const FeatureToggles& f = config_.features;
+  const bool coordinated = isCoordinated(config_.planning.method);
   if (f.congestion_cost && config_.allocation.method != AllocationMethod::kCostAware) {
     inert.push_back("congestion_cost (cost_aware only)");
   }
-  if (f.rolling_replanning && !isCoordinated(config_.planning.method)) {
-    inert.push_back("rolling_replanning (coordinated planners only)");
+  if (!coordinated) {
+    const std::string only = " (coordinated planners only)";
+    if (f.rolling_replanning) inert.push_back("rolling_replanning" + only);
+    if (f.dependency_graph) inert.push_back("dependency_graph" + only);
+    if (f.intersection_reservations) inert.push_back("intersection_reservations" + only);
+    if (f.deadlock_recovery) inert.push_back("deadlock_recovery" + only);
+  } else if (f.dependency_graph && !f.rolling_replanning) {
+    inert.push_back("dependency_graph (rolling replanning only)");
   }
-  if (f.dependency_graph) inert.push_back("dependency_graph (Stage 5)");
-  if (f.intersection_reservations) inert.push_back("intersection_reservations (Stage 5)");
-  if (f.deadlock_recovery) inert.push_back("deadlock_recovery (Stage 5)");
-  if (f.starvation_guard) inert.push_back("starvation_guard (Stage 5)");
+  if (f.starvation_guard && config_.allocation.method == AllocationMethod::kNearest) {
+    inert.push_back("starvation_guard (matching allocators only; nearest serves the oldest first)");
+  }
   if (!inert.empty()) {
     std::string text = "toggles on but inactive here:";
     for (size_t i = 0; i < inert.size(); ++i) text += (i == 0 ? " " : ", ") + inert[i];
@@ -119,6 +205,7 @@ RunResult Simulation::run(const std::optional<std::filesystem::path>& out_dir) c
   FleetManager fleet(config_, WorldModel(map_, spawn_));
   OrderGenerator orders(map_, config_.orders.arrival_rate, deriveSeed(seed, rng_stream::kOrders));
   InvariantChecker checker(isCoordinated(config_.planning.method));
+  FaultInjector faults(config_.faults.events);
   ProgressMonitor progress(config_.fleet.size);
   RunStats stats(config_.fleet.size, config_.run.warmup_steps);
   AssignmentLog assignments;
@@ -140,6 +227,19 @@ RunResult Simulation::run(const std::optional<std::filesystem::path>& out_dir) c
     input.new_orders = orders.step(t);
     issued += static_cast<int64_t>(input.new_orders.size());
     stats.recordOrders(input.new_orders);
+    // Closures reach the robots and, as observations, the coordinator. Both close a closure's
+    // cells together once no robot stands on any of them.
+    for (const FaultEvent& e : faults.due(t)) {
+      CellObservation seen{t, {}, {}};
+      if (e.type == FaultType::kBlockCells) {
+        robots.block(e.cells);
+        seen.blocked = e.cells;
+      } else if (e.type == FaultType::kUnblockCells) {
+        robots.unblock(e.cells);
+        seen.cleared = e.cells;
+      }
+      input.observations.push_back(std::move(seen));
+    }
     input.reports = robots.collectReports(t);
 
     const TickOutput output = fleet.tick(input);
@@ -148,8 +248,8 @@ RunResult Simulation::run(const std::optional<std::filesystem::path>& out_dir) c
     assignments.record(output, robots.lastStep());
 
     const TruthSnapshot truth = robots.snapshot();
-    std::vector<Violation> found =
-        checker.check(robots.map(), robots.lastStep(), truth, fleet.tasks(), issued);
+    std::vector<Violation> found = checker.check(robots.map(), robots.lastStep(), truth,
+                                                 fleet.tasks(), issued, output.commands);
     const ProgressStep& seen = progress.observe(robots.lastStep(), truth);
     stats.recordStep(robots.lastStep(), truth, output.stats);
     if (writer) {

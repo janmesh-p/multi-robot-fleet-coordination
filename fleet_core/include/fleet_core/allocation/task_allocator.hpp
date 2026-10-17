@@ -21,6 +21,12 @@ struct AllocationContext {
   std::vector<TaskId> pending{};  // pending tasks, oldest first
 };
 
+// Starvation guard (features.starvation_guard), for the matching allocators: an order pending
+// longer than this many steps is starving. The oldest starving orders, up to one per available
+// robot, are matched first; the remaining robots then match the remaining orders as usual.
+// nearest needs no guard: it always serves the oldest order first.
+inline constexpr Timestep kStarvationSteps = 600;
+
 // Assigns pending tasks to available robots. See allocation.method:
 //   nearest     oldest order first, to the closest available robot (Stage 1 baseline)
 //   hungarian   one minimum-cost matching of every available robot and pending order; the cost

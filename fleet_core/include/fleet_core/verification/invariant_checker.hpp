@@ -29,8 +29,10 @@ enum class ViolationKind : uint8_t {
   kTaskDeliveredTwice,  // a task was delivered more than once
   kPhantomDelivery,     // the coordinator marked done a task no robot delivered
   kTaskLost,            // the coordinator does not track every order issued
+  // Stage 5. A robot ended a step on a cell its newest permit did not cover: it entered a cell
+  // the traffic rules had not reserved for it. Guards every backend's obedience to permits.
+  kUnpermittedMove,
 };
-// Stage 5 adds a check for illegal entry into reserved intersections.
 
 std::string_view toString(ViolationKind kind);
 
@@ -51,9 +53,12 @@ class InvariantChecker {
 
   // Call once per step, after the robots moved and after the coordinator's tick for that step.
   // orders_issued: orders created so far, all of which the coordinator has been given.
+  // commands: what the coordinator sent this step; a robot that moved must end on a cell of its
+  // command's path within the permit. Robots without a command are not checked.
   std::vector<Violation> check(const GridMap& map, const StepTruth& step,
                                const TruthSnapshot& after, const TaskManager& tasks,
-                               int64_t orders_issued);
+                               int64_t orders_issued,
+                               const std::vector<RobotCommand>& commands = {});
 
  private:
   bool conflict_free_;

@@ -41,8 +41,10 @@ const ProgressStep& ProgressMonitor::observe(const StepTruth& step, const TruthS
     }
     if (after.holding[i]) work_left_ = true;
     // A safety stop always leaves someone in the wanted cell: the robot that stayed there, or
-    // the lower id that won the cell this step.
-    if (isSafetyStop(m.outcome)) {
+    // the lower id that won the cell this step. A yield waits for the robot it follows, and a
+    // robot held by the traffic rules for the robot in the cell it wants next, if there is one.
+    if (isSafetyStop(m.outcome) || m.outcome == MotionOutcome::kYield ||
+        m.outcome == MotionOutcome::kNoPermit) {
       const auto it = occupant.find(m.intended);
       if (it != occupant.end() && it->second != static_cast<RobotId>(i)) {
         p.waits_for[i] = it->second;
@@ -66,6 +68,8 @@ const ProgressStep& ProgressMonitor::observe(const StepTruth& step, const TruthS
       case MotionOutcome::kBlockedOccupied:
       case MotionOutcome::kBlockedCell:
       case MotionOutcome::kInvalidStep:
+      case MotionOutcome::kYield:
+      case MotionOutcome::kNoPermit:
         ++no_progress_[i];
         break;
     }

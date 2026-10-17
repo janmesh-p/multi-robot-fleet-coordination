@@ -19,7 +19,7 @@ jobs:
             build_type: Debug
             sanitize: "ON"
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
 
       - name: Install dependencies
         run: |
@@ -55,10 +55,22 @@ jobs:
           --planners pibt,windowed_coop_astar,prioritized,ecbs,cbs --fleet 10 --seeds 1
           --out build/bench_planning.csv
 
+      - name: Late robots run an hour without a violation
+        run: >
+          ./build/bench_planning --config benchmarks/configs/planning.yaml
+          --planners pibt,windowed_coop_astar,prioritized,ecbs,cbs --fleet 10 --seeds 1
+          --delay 0.2 --out build/bench_late.csv
+
+      - name: A closed aisle runs an hour without a violation
+        run: >
+          ./build/bench_planning --config benchmarks/configs/closure.yaml
+          --planners pibt,windowed_coop_astar,prioritized,ecbs,cbs --fleet 10 --seeds 1
+          --out build/bench_closure.csv
+
   format:
     runs-on: ubuntu-22.04
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
 
       - name: Install clang-format 18.1.3
         run: |

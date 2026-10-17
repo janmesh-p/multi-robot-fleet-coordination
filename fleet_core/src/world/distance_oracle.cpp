@@ -32,9 +32,14 @@ DistanceOracle::DistanceOracle(const GridMap& map, bool exact)
   free_count_ = static_cast<int32_t>(free_cells.size());
   const auto n = static_cast<size_t>(free_count_);
 
-  // Neighbor lists in free-cell indices, static map only.
+  // Neighbor lists in free-cell indices. A path may start on an endpoint or a blocked cell, end
+  // on an endpoint, and pass through neither: both are leaves of the search.
   std::vector<uint8_t> endpoint(n, 0);
-  for (size_t v = 0; v < n; ++v) endpoint[v] = map.isEndpoint(free_cells[v]) ? 1 : 0;
+  std::vector<uint8_t> blocked(n, 0);
+  for (size_t v = 0; v < n; ++v) {
+    endpoint[v] = map.isEndpoint(free_cells[v]) ? 1 : 0;
+    blocked[v] = map.isBlocked(free_cells[v]) ? 1 : 0;
+  }
   std::vector<std::array<int32_t, 4>> neighbors(n);
   constexpr int32_t kDr[4] = {-1, 1, 0, 0};
   constexpr int32_t kDc[4] = {0, 0, -1, 1};
@@ -50,13 +55,15 @@ DistanceOracle::DistanceOracle(const GridMap& map, bool exact)
   for (size_t source = 0; source < n; ++source) {
     uint16_t* dist = &table_[source * n];
     dist[source] = 0;
+    if (blocked[source] != 0) continue;  // no path ends on a blocked cell
     size_t head = 0;
     size_t tail = 0;
     queue[tail++] = static_cast<int32_t>(source);
     while (head < tail) {
       const auto v = static_cast<size_t>(queue[head++]);
-      // Endpoints get a distance (a path may start there) but are not passed through.
-      if (v != source && endpoint[v] != 0) continue;
+      // Endpoints and blocked cells get a distance (a path may start there) but are not passed
+      // through.
+      if (v != source && (endpoint[v] != 0 || blocked[v] != 0)) continue;
       const auto next_dist = static_cast<uint16_t>(dist[v] + 1);
       for (const int32_t w : neighbors[v]) {
         if (w < 0 || dist[static_cast<size_t>(w)] != kNoPath) continue;
@@ -77,7 +84,8 @@ int32_t DistanceOracle::distance(const Cell& from, const Cell& to) const {
   const int32_t a = freeIndex(from);
   const int32_t b = freeIndex(to);
   if (a < 0 || b < 0) return kUnreachable;
-  // Undirected grid: the BFS row of `to` holds the distance from every cell to `to`.
+  // The BFS row of `to` holds the distance from every cell to `to`: a path reversed is a path,
+  // except that one may start on a blocked cell, and the row of a blocked `to` stays empty.
   const uint16_t d =
       table_[static_cast<size_t>(b) * static_cast<size_t>(free_count_) + static_cast<size_t>(a)];
   return d == kNoPath ? kUnreachable : d;

@@ -95,6 +95,16 @@ int main(int argc, char** argv) {
               << " orders)\n"
               << "utilization " << fixed(s.utilization * 100.0, 1) << "%\n"
               << "conflicts  " << s.conflicts << " robot-steps stopped by robot safety\n"
+              << "traffic    " << s.delayed_steps << " robot-steps late, " << s.yields
+              << " yielding, " << s.traffic_holds << " held; " << s.deadlocks_resolved
+              << " deadlocks resolved\n"
+              << "waiting    slowest delivery "
+              << (s.completion_samples > 0 ? fixed(s.max_completion_steps, 0) + " steps"
+                                           : std::string("none"))
+              << "; oldest open order "
+              << (s.oldest_open_steps > 0 ? std::to_string(s.oldest_open_steps) + " steps"
+                                          : std::string("none"))
+              << "\n"
               << "planning   " << fixed(s.planning_p50_ms, 3) << " ms p50, "
               << fixed(s.planning_p95_ms, 3) << " ms p95 over " << s.planning_calls << " calls, "
               << s.planner_failures << " found no plan\n"

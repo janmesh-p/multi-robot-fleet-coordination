@@ -39,6 +39,14 @@ struct RunSummary {
   int64_t expansions{0};        // whole run
   int64_t planner_failures{0};  // whole run: calls that found no plan; not in summary.csv
 
+  // Stage 5, steady state. Not in summary.csv, whose columns the baseline reference fixes.
+  int64_t delayed_steps{0};          // robot-steps lost to execution noise
+  int64_t yields{0};                 // robot-steps waiting behind a robot it was told to follow
+  int64_t traffic_holds{0};          // robot-steps held by the traffic rules, path going on
+  int64_t deadlocks_resolved{0};     // whole run: wait-for cycles the coordinator replanned away
+  double max_completion_steps{0.0};  // slowest of the orders in mean_completion_steps
+  Timestep oldest_open_steps{0};     // age at the end of the oldest order not delivered; 0: none
+
   int64_t violations{0};
   bool aborted{false};
 
@@ -87,6 +95,11 @@ class RunStats {
   std::vector<double> planning_ms_{};
   int64_t expansions_{0};
   int64_t planner_failures_{0};
+  int64_t delayed_steps_{0};
+  int64_t yields_{0};
+  int64_t traffic_holds_{0};
+  int64_t deadlocks_resolved_{0};
+  std::map<TaskId, Timestep> open_{};  // created, not yet delivered
 };
 
 }  // namespace fleet_core

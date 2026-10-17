@@ -112,6 +112,10 @@ struct RobotCommand {
   std::optional<TaskOrder> task{};  // empty when idle or parking
   std::vector<Cell> path{};         // path[0] is the robot's expected cell
   int32_t permitted_until{0};       // the robot may advance up to path[permitted_until]
+  // The robot's next move may enter the cell of this robot as that robot leaves it in the same
+  // step. If that robot stays, the move waits: a planned yield, not a safety stop. -1: the next
+  // cell must be empty.
+  RobotId follow{-1};
 };
 
 // Coordinator-side numbers for one tick (FleetManager::tick), recorded by the metrics.

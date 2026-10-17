@@ -43,12 +43,13 @@ struct ProgressSummary {
 
 // Watches ground truth for robots that stop making progress, and for groups locked together.
 //
-// Wait-for graph: a robot stopped by robot safety waits for the robot standing in the cell it
-// wanted. Each robot wants one cell, so each robot waits for at most one other, and the graph is
-// a set of chains. A chain either ends at a robot that is not waiting (working at a station,
-// holding, idle: a queue that clears) or loops back on itself: a cycle, where every robot waits
-// for the next and none can move until a plan changes. A cycle that lasts kConfirmSteps steps is
-// a deadlock. Robots whose chain runs into a cycle are blocked behind it.
+// Wait-for graph: a robot stopped by robot safety, yielding, or held by the traffic rules waits
+// for the robot standing in the cell it wanted, if any. Each robot wants one cell, so each robot
+// waits for at most one other, and the graph is a set of chains. A chain either ends at a robot
+// that is not waiting (working at a station, holding, idle: a queue that clears) or loops back
+// on itself: a cycle, where every robot waits for the next and none can move until a plan
+// changes. A cycle that lasts kConfirmSteps steps is a deadlock. Robots whose chain runs into a
+// cycle are blocked behind it.
 //
 // Like the invariant checker, it reads only ground truth, so the coordinator never grades itself.
 class ProgressMonitor {

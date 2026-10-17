@@ -9,13 +9,14 @@
 
 namespace fleet_core {
 
-// Shortest-path distances on the static map, for allocation costs and planner heuristics.
+// Shortest-path distances, for allocation costs and planner heuristics.
 //
 // exact = true (features.distance_oracle): BFS distances between every pair of free cells,
-// computed once at startup, following the same rule as the planners: a path may start or end on
-// an endpoint (station, parking) but never pass through one. exact = false: Manhattan distance,
-// the ablation. Both ignore dynamic blocks, so they never overestimate and stay admissible A*
-// heuristics.
+// following the same rule as the planners: a path may start or end on an endpoint (station,
+// parking) but never pass through one. Cells blocked when the table is built are never entered,
+// though a path may start on one, the way a robot leaves a cell that closed under it. The
+// coordinator rebuilds the table when cells close or reopen (Stage 5), so it stays exact.
+// exact = false: Manhattan distance, the ablation; it ignores blocks, so it never overestimates.
 class DistanceOracle {
  public:
   static constexpr int32_t kUnreachable = std::numeric_limits<int32_t>::max() / 4;

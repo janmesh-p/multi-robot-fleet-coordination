@@ -15,11 +15,13 @@
 
 #include <gtest/gtest.h>
 
+#include "fleet_core/common/rng.hpp"
 #include "fleet_core/execution/grid_executor.hpp"
 #include "fleet_core/fleet_manager.hpp"
 #include "fleet_core/metrics/assignment_log.hpp"
 #include "fleet_core/simulation.hpp"
 #include "fleet_core/verification/invariant_checker.hpp"
+#include "fleet_core/world/map_generator.hpp"
 
 namespace fleet_core {
 namespace {
@@ -49,7 +51,8 @@ struct Harness {
           std::unique_ptr<PathPlanner> planner = nullptr)
       : config(c),
         map(GridMap::fromString(text)),
-        robots(map, spawn, c.orders.service_steps, 0.0, 1),
+        robots(map, spawn, c.orders.service_steps, c.execution.delay_probability,
+               deriveSeed(c.run.seed, rng_stream::kDelays)),
         fleet(c, WorldModel(map, spawn), makeAllocator(c),
               planner ? std::move(planner) : makePlanner(c.planning)),
         checker(isCoordinated(c.planning.method)) {}
@@ -64,8 +67,8 @@ struct Harness {
     robots.dispatch(t, output.commands);
     robots.step(t);
     log.record(output, robots.lastStep());
-    for (Violation& v :
-         checker.check(robots.map(), robots.lastStep(), robots.snapshot(), fleet.tasks(), issued)) {
+    for (Violation& v : checker.check(robots.map(), robots.lastStep(), robots.snapshot(),
+                                      fleet.tasks(), issued, output.commands)) {
       violations.push_back(std::move(v));
     }
     return robots.lastStep();
@@ -221,6 +224,26 @@ TEST(Simulation, RandomSpawnWithoutParking) {
   EXPECT_THROW(Simulation{c}, std::runtime_error);
 }
 
+// Every parking cell is a home, so no station has a waiting cell: a baseline robot whose station
+// is taken waits where it stands, often halfway along its path, in the same tick that other robots
+// replan around it.
+TEST(Simulation, BaselineRobotsWaitWhereTheyStandWithoutWaitingCells) {
+  Config c = smallConfig();
+  c.map.file.clear();
+  c.map.generator = MapGeneratorConfig{1, 1, 2, 2, 1, 1};
+  c.fleet.size = static_cast<int32_t>(generateWarehouse(*c.map.generator).parking().size());
+  c.orders.service_steps = 2;
+  c.run.horizon_steps = 200;
+  c.run.warmup_steps = 50;
+  for (const uint64_t seed : {uint64_t{13}, uint64_t{14}, uint64_t{17}}) {
+    c.run.seed = seed;
+    RunSummary s;
+    EXPECT_NO_THROW(s = Simulation(c).run().summary) << "seed " << seed;
+    EXPECT_EQ(s.violations, 0) << "seed " << seed;
+    EXPECT_GT(s.orders_delivered, 0) << "seed " << seed;
+  }
+}
+
 TEST(Simulation, RejectsWhatThisStageCannotRun) {
   const auto expectRejected = [](Config c, const std::string& fragment) {
     try {
@@ -234,13 +257,24 @@ TEST(Simulation, RejectsWhatThisStageCannotRun) {
   c.faults.packet_loss = 0.05;
   expectRejected(c, "Stage 6");
   c = smallConfig();
-  c.faults.events = {FaultEvent{5, FaultType::kBlockCells, -1, {{1, 1}}, 0}};
-  expectRejected(c, "Stage 5");
-  c = smallConfig();
   c.faults.events = {FaultEvent{5, FaultType::kRobotDeath, 0, {}, 0}};
   expectRejected(c, "Stage 6");
+  // Closures shut aisle cells only, and the open aisles must keep reaching every station and
+  // parking cell. (1, 1) is the only aisle cell next to the parking cell above it.
+  c = smallConfig();
+  c.faults.events = {FaultEvent{5, FaultType::kBlockCells, -1, {{1, 1}}, 0}};
+  expectRejected(c, "faults.events[0] (block_cells at step 5) would cut the open aisles apart");
+  c.faults.events = {FaultEvent{5, FaultType::kBlockCells, -1, {{2, 0}}, 0}};
+  expectRejected(c, "cell [2, 0] is not an aisle cell");
+  c.faults.events = {FaultEvent{5, FaultType::kBlockCells, -1, {{4, 10}}, 0},
+                     FaultEvent{9, FaultType::kUnblockCells, -1, {{4, 10}}, 0},
+                     FaultEvent{7, FaultType::kBlockCells, -1, {{1, 1}}, 0}};
+  expectRejected(c, "faults.events[2] (block_cells at step 7)");
+  c.faults.events = {FaultEvent{5, FaultType::kBlockCells, -1, {{4, 10}, {4, 11}}, 0},
+                     FaultEvent{9, FaultType::kUnblockCells, -1, {{4, 10}, {4, 11}}, 0}};
+  EXPECT_NO_THROW(Simulation{c});
   // Coordinated planners need queues and parking (unique goals off the aisles), and the
-  // windowed ones need rolling replanning. Late robots wait for Stage 5.
+  // windowed ones need rolling replanning.
   c = smallConfig();
   c.planning.method = PlanningMethod::kCbs;
   c.features.station_queues = false;
@@ -255,10 +289,11 @@ TEST(Simulation, RejectsWhatThisStageCannotRun) {
     c.features.rolling_replanning = false;
     expectRejected(c, "needs features.rolling_replanning");
   }
+  // Late robots run with every planner (Stage 5).
   c = smallConfig();
   c.planning.method = PlanningMethod::kPrioritized;
   c.execution.delay_probability = 0.1;
-  expectRejected(c, "Stage 5");
+  EXPECT_NO_THROW(Simulation{c});
   // The coordinator itself refuses the same configs.
   c.execution.delay_probability = 0.0;
   c.features.station_queues = false;

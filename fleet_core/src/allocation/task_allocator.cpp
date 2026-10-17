@@ -13,12 +13,12 @@ std::unique_ptr<TaskAllocator> makeAllocator(const Config& config) {
     case AllocationMethod::kNearest:
       return makeNearestAllocator();
     case AllocationMethod::kHungarian:
-      return makeHungarianAllocator();
+      return makeHungarianAllocator(config.features.starvation_guard);
     case AllocationMethod::kCostAware:
       return makeCostAwareAllocator(a.congestion_weight, config.features.congestion_cost,
-                                    config.orders.service_steps);
+                                    config.orders.service_steps, config.features.starvation_guard);
     case AllocationMethod::kLearned:
-      return makeLearnedAllocator(CostModel::load(a.model_file));
+      return makeLearnedAllocator(CostModel::load(a.model_file), config.features.starvation_guard);
   }
   throw std::logic_error("makeAllocator: unknown allocation method");
 }

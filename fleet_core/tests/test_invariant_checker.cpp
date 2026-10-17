@@ -1,4 +1,5 @@
 #include <string>
+#include <utility>
 #include <vector>
 
 #include <gtest/gtest.h>
@@ -18,6 +19,7 @@ struct Fixture {
   StepTruth step;
   TruthSnapshot after;
   TaskManager tasks;
+  std::vector<RobotCommand> commands;
 
   Fixture() {
     step.t = 5;
@@ -32,7 +34,7 @@ struct Fixture {
   std::vector<ViolationKind> check(bool conflict_free = true, int64_t issued = 0) {
     InvariantChecker checker(conflict_free);
     std::vector<ViolationKind> kinds;
-    for (const Violation& v : checker.check(kMap, step, after, tasks, issued)) {
+    for (const Violation& v : checker.check(kMap, step, after, tasks, issued, commands)) {
       EXPECT_EQ(v.t, 5);
       EXPECT_FALSE(v.detail.empty());
       kinds.push_back(v.kind);
@@ -88,6 +90,40 @@ TEST(InvariantChecker, CoordinationViolations) {
     f.step.motion[1].outcome = MotionOutcome::kBlockedOccupied;
     EXPECT_EQ(f.check(true), std::vector<ViolationKind>{ViolationKind::kCoordinationConflict});
     EXPECT_TRUE(f.check(false).empty());  // the uncoordinated baseline is allowed conflicts
+  }
+}
+
+RobotCommand command(RobotId robot, std::vector<Cell> path, int32_t permitted_until) {
+  RobotCommand c;
+  c.robot = robot;
+  c.path = std::move(path);
+  c.permitted_until = permitted_until;
+  return c;
+}
+
+// Stage 5: a robot that moves must end on its command's path, no further than its permit. Waiting
+// for a permit or yielding to the robot ahead breaks nothing.
+TEST(InvariantChecker, PermitViolations) {
+  {
+    Fixture f;
+    f.commands = {command(0, {{0, 0}, {0, 1}, {0, 2}}, 1), command(1, {{2, 4}, {2, 3}}, 0)};
+    EXPECT_TRUE(f.check().empty());
+    f.commands[0].permitted_until = 0;  // it was told to stay
+    EXPECT_EQ(f.check(), std::vector<ViolationKind>{ViolationKind::kUnpermittedMove});
+    f.commands[0] = command(0, {{0, 0}, {1, 0}}, 1);  // the cell is not on its path at all
+    EXPECT_EQ(f.check(), std::vector<ViolationKind>{ViolationKind::kUnpermittedMove});
+  }
+  {
+    Fixture f;
+    f.commands = {command(1, {{2, 4}, {2, 3}}, 1)};  // robot 0 got no command: not checked
+    EXPECT_TRUE(f.check().empty());
+  }
+  for (const MotionOutcome outcome : {MotionOutcome::kYield, MotionOutcome::kNoPermit}) {
+    Fixture f;
+    f.step.motion[1].outcome = outcome;
+    f.step.motion[1].intended = {2, 3};
+    f.commands = {command(1, {{2, 4}, {2, 3}}, outcome == MotionOutcome::kYield ? 1 : 0)};
+    EXPECT_TRUE(f.check(true).empty()) << toString(outcome);
   }
 }
 
