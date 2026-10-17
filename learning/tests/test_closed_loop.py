@@ -136,6 +136,21 @@ def test_names_follow_section_7(models):
     assert "allocation.model_file" not in cells[1]["changes"]
 
 
+def test_delay_round_names_and_configs(models):
+    cells = closed_loop.tune_cells((0.5,), models[:1], (0.2,), 0.2)
+    assert [c["name"] for c in cells] == [
+        "tune_cost_aware_w050_r020_d020",
+        "tune_learned_flat_r020_d020",
+    ]
+    cells += closed_loop.final_cells(2.0, models[0], (0.1,), 0.2)
+    assert cells[-1]["name"] == "final_learned_r010_d020"
+    for cell in cells:
+        assert cell["changes"]["execution.delay_probability"] == 0.2
+        assert cell["changes"]["run.name"] == cell["name"]
+    plain = closed_loop.final_cells(2.0, models[0], (0.1,))
+    assert all("execution.delay_probability" not in c["changes"] for c in plain)
+
+
 def test_seeds_must_fit_the_phase():
     assert closed_loop.check_seeds("tune", range(2000, 2010)) == tuple(range(2000, 2010))
     assert closed_loop.check_seeds("final", (1, 10, 3000)) == (1, 10, 3000)
@@ -316,6 +331,20 @@ def test_a_phase_runs_once_per_commit(tmp_path, fake_run_sweep, models):
     run(tmp_path, "final", cells, fake_run_sweep, fleet=(5,))
     with pytest.raises(closed_loop.ClosedLoopError, match="already exists"):
         run(tmp_path, "final", cells, fake_run_sweep, fleet=(5,))
+
+
+def test_delay_round_has_its_own_folder(tmp_path, fake_run_sweep, models):
+    cells = closed_loop.final_cells(1.0, models[0], (0.2,), 0.2)
+    manifest = run(tmp_path, "final", cells, fake_run_sweep, fleet=(5,))
+    assert manifest["delay_probability"] == 0.2
+    folder = tmp_path / "data" / manifest["commit"] / "delay020" / "closed_loop" / "final"
+    assert closed_loop._phase_dir(manifest, REPO, tmp_path / "data") == folder
+    config = yaml.safe_load((folder / "configs" / "final_learned_r020_d020.yaml").read_text())
+    assert config["execution"]["delay_probability"] == 0.2
+    assert "execution.delay_probability 0.2" in closed_loop.report(folder, REPO)
+    mixed = cells + closed_loop.final_cells(1.0, models[0], (0.1,))
+    with pytest.raises(ValueError, match="one delay setting"):
+        run(tmp_path, "final", mixed, fake_run_sweep, fleet=(5,))
 
 
 def test_report_needs_a_finished_phase(tmp_path):

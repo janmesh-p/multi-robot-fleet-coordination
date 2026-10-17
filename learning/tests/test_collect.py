@@ -94,6 +94,17 @@ def test_run_names_follow_section_7():
             collect.rate_code(rate)
 
 
+def test_delay_round_names_end_in_its_code():
+    assert collect.run_name("hungarian", 0.1, 0.2) == "collect_hungarian_r010_d020"
+    assert collect.delay_suffix(None) == ""
+    assert collect.round_dir(Path("a"), None) == Path("a")
+    assert collect.round_dir(Path("a"), 0.2) == Path("a/delay020")
+    assert collect.parse_delay("0.2") == 0.2
+    for delay in ("0", "1", "0.125", "x"):
+        with pytest.raises(ValueError):
+            collect.parse_delay(delay)
+
+
 def test_int_lists_read_like_run_sweep():
     assert collect.parse_int_list("5,10,25") == [5, 10, 25]
     assert collect.parse_int_list("1000-1039") == list(range(1000, 1040))
@@ -139,6 +150,18 @@ def test_configs_change_only_the_grid_keys_and_the_map_path():
     assert after["map.file"] == str(REPO / "maps" / "warehouse_small.txt")
     assert {key: after[key] for key in cell} == cell
     assert leaves(base) == before  # the base is not modified
+
+
+def test_delay_round_also_sets_the_delay_probability():
+    base_path = REPO / collect.BASE_CONFIG
+    base = yaml.safe_load(base_path.read_text())
+    cell = collect.grid(("hungarian",), (0.2,), "pibt", 0.2)[0]
+    assert cell["run.name"] == "collect_hungarian_r020_d020"
+    config = collect.make_config(base, base_path.parent, cell)
+    before, after = leaves(base), leaves(config)
+    assert before.keys() == after.keys()
+    assert {key for key in before if before[key] != after[key]} == {*cell, "map.file"}
+    assert after["execution.delay_probability"] == 0.2
 
 
 def test_model_file_is_made_absolute_too(tmp_path):
@@ -208,6 +231,26 @@ def test_collection_writes_configs_runs_and_manifest(tmp_path, fake_run_sweep):
     assert [sweep["trace_files_deleted"] for sweep in manifest["sweeps"]] == [4, 4]
     assert manifest["sweeps"][0]["command"][0] == str(fake_run_sweep)
     assert manifest["wall_seconds"] > 0
+
+
+def test_delay_round_has_its_own_folder(tmp_path, fake_run_sweep):
+    manifest = run(tmp_path, fake_run_sweep, delay=0.2)
+    data = tmp_path / "data" / manifest["commit"] / "delay020"
+    name = "collect_nearest_r010_d020"
+    assert files(data) == ["configs", "manifest.json", "runs"]
+    assert files(data / "runs") == [name]
+    config = yaml.safe_load((data / "configs" / f"{name}.yaml").read_text())
+    assert config["execution"]["delay_probability"] == 0.2
+    assert config["run"]["name"] == name
+    assert manifest["delay_probability"] == 0.2
+    # The plain round of the same commit still has its own place.
+    assert run(tmp_path, fake_run_sweep)["delay_probability"] is None
+    assert files(tmp_path / "data" / manifest["commit"]) == [
+        "configs",
+        "delay020",
+        "manifest.json",
+        "runs",
+    ]
 
 
 def test_keep_traces_keeps_them(tmp_path, fake_run_sweep):
@@ -288,6 +331,12 @@ def test_cli_defaults_follow_section_7(recorded):
     assert options["fleet"] == (5, 10, 25)
     assert options["seeds"] == tuple(range(1000, 1040))
     assert options["keep_traces"] is False and options["allow_dirty"] is False
+    assert options["delay"] is None
+
+
+def test_cli_delay_round(recorded):
+    assert collect.main(["--delay", "0.2"]) == 0
+    assert recorded[0]["delay"] == 0.2
 
 
 def test_cli_plumbing_options(recorded):
@@ -313,6 +362,7 @@ def test_cli_plumbing_options(recorded):
         ["--seeds", "10-1"],
         ["--jobs", "0"],
         ["--planner", "cbs"],
+        ["--delay", "1.5"],
     ],
 )
 def test_cli_rejects_bad_arguments(recorded, args):

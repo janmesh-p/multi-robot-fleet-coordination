@@ -5,7 +5,10 @@ to it. One step is one simulated second.
 
 Status: Stage 5 (pibt). Two rounds, reported side by side: the Stage 4 round and the Stage 5
 rerun. Each round's success criterion was committed before its final runs: commit `8133d47`
-for Stage 4 and commit `6471ec6` for Stage 5.
+for Stage 4 and commit `6471ec6` for Stage 5. A third round with late robots
+(`execution.delay_probability: 0.2`), added to the contract after those two, is reported on its
+own in [Late-robot round](#late-robot-round-delay-02). Its criterion was committed before its
+final runs, in commit `05440c6`.
 
 ## Result
 
@@ -17,6 +20,10 @@ In the Stage 4 round, `learned` won at 5 and 10 robots, but partly by serving th
 first. In the Stage 5 round, without `order_age` as an input and with the starvation guard in
 the core, those wins are gone: against tuned `cost_aware`, no interval in any cell lies entirely
 above or below 0. Against `hungarian`, `learned` wins clearly only at 10 robots and rate 0.1.
+
+The late-robot round, with delay 0.2 in every run, does not meet the criterion either: median
+-1.80 orders per hour, 95% interval [-15.60, 4.20]. It was chosen after the two rounds above, so
+it is reported separately, with that caveat.
 
 ## Question
 
@@ -395,6 +402,226 @@ passed over, not how long the queue is.
 - The Stage 4 model used `order_age`, which changes which orders get served, not only how long a
   trip takes. The question in section 1 is about trip cost; the Stage 5 model does not read it.
 
+## Late-robot round (delay 0.2)
+
+This round was added to the contract on Oct 17 (section 11), after the Stage 4 and Stage 5
+rounds found no win for `learned`. It was chosen after two rounds without a win, so a win here
+is weaker evidence than a win in the first round would have been. A loss is reported the same
+way.
+
+The protocol of sections 7 to 9 is unchanged, except that every config, in the collection, the
+tuning, and the final runs, also sets `execution.delay_probability: 0.2`: a robot misses a step
+with probability 0.2, and the others wait for it under the Stage 5 traffic rules. Same grid,
+seeds and splits, model families without `order_age`, `cost_aware` weights 1 to 16, and at most
+5 learned models. Data is under `learning/data/<commit>/delay020/`, and run names end in `_d020`.
+
+### Before the final runs
+
+Collection at commit `021b49dfc31b` (Stage 5 core; only the learning code differs from
+`origin/main`), `learning/data/021b49dfc31b/delay020/`: 1080 runs, none aborted. 238099
+assignments logged. Margin 1100 steps: the longest kept `steps_to_pickup` is 548 steps, and 1100
+is the smallest multiple of 100 that is at least twice that. No row inside the margin has
+`steps_to_pickup = -1`. From
+`python -m fleet_learning.dataset learning/data/021b49dfc31b/delay020/runs --margin 1100`.
+
+Success criterion, the same as in the main rounds, with delay 0.2 in every run, written before
+the final runs:
+
+> At 25 robots and arrival rate 0.2, with `execution.delay_probability: 0.2`, the per-seed
+> difference in `orders_per_hour` (learned minus tuned `cost_aware`, seeds 1-10) has a median
+> whose 95% bootstrap interval lies entirely above 0.
+
+Models, trained as in the Stage 5 round, with margin 1100 (commit `3e34797`):
+`cost_model_d020.json` (best deployable), `cost_model_d020_linear.json`, and
+`cost_model_d020_nocells.json`.
+
+Closed-loop tuning, seeds 2000-2009, fleets 5, 10, 25, arrival rates 0.1 and 0.2,
+`planning.method: pibt`, delay 0.2, 60 runs per candidate. Mean `orders_per_hour`:
+
+| Candidate | Runs | All runs | n5 r0.1 | n5 r0.2 | n10 r0.1 | n10 r0.2 | n25 r0.1 | n25 r0.2 |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
+| cost_aware w=1 | 60 | 239.02 | 139.20 | 138.60 | 236.16 | 234.24 | 344.04 | 341.88 |
+| cost_aware w=2 | 60 | 238.90 | 141.72 | 139.80 | 236.16 | 236.28 | 340.20 | 339.24 |
+| cost_aware w=4 | 60 | 238.44 | 141.12 | 138.96 | 236.28 | 236.40 | 341.76 | 336.12 |
+| cost_aware w=8 | 60 | 239.26 | 139.68 | 138.60 | 235.08 | 237.24 | 342.36 | 342.60 |
+| cost_aware w=16 | 60 | 238.94 | 139.68 | 138.60 | 236.64 | 237.24 | 340.80 | 340.68 |
+| learned cost_model_d020 | 60 | 239.20 | 139.56 | 140.04 | 236.88 | 234.96 | 344.28 | 339.48 |
+| learned cost_model_d020_linear | 60 | 240.40 | 139.56 | 139.92 | 237.84 | 237.00 | 343.92 | 344.16 |
+| learned cost_model_d020_nocells | 60 | 239.36 | 138.72 | 140.16 | 236.40 | 235.08 | 345.12 | 340.68 |
+
+From
+`python -m fleet_learning.closed_loop report learning/data/3e34797e8b66/delay020/closed_loop/tune`.
+
+Chosen for the final runs: `cost_aware` with `congestion_weight` 8, and `learned` with
+`cost_model_d020_linear.json`.
+
+### Offline test
+
+Offline test split, seeds 1030-1039, 42669 rows, scored once. Family winners from the deployed
+model's metrics file, all 18 features without `order_age`. Errors in steps; bias is predicted
+minus observed `steps_to_pickup`. Delayed rows (`steps_to_pickup > dist_to_pickup`): 42481 of
+42669.
+
+| Model | Candidate | MAE | RMSE | Bias | Delayed MAE | Delayed RMSE | Delayed bias |
+| --- | --- | ---: | ---: | ---: | ---: | ---: | ---: |
+| free_flow | free_flow | 44.76 | 65.96 | -44.76 | 44.96 | 66.11 | -44.96 |
+| linear (deployed) | linear_excess | 17.05 | 24.54 | 0.67 | 17.11 | 24.59 | 0.66 |
+| mlp | mlp_direct_32 | 14.84 | 22.31 | 0.76 | 14.87 | 22.36 | 0.73 |
+| gbdt (not deployable) | gbdt_excess | 14.62 | 22.32 | 0.27 | 14.67 | 22.37 | 0.25 |
+
+| Model | n5 | n10 | n25 | r0.05 | r0.1 | r0.2 | cost_aware | hungarian | nearest | d0-5 | d6-10 | d11-20 | d21+ |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
+| rows | 9067 | 14176 | 19426 | 11035 | 15685 | 15949 | 14241 | 14178 | 14250 | 814 | 2682 | 6045 | 33128 |
+| free_flow | 19.76 | 28.24 | 68.49 | 14.58 | 49.96 | 60.53 | 44.63 | 45.31 | 44.35 | 6.59 | 9.78 | 15.77 | 53.82 |
+| linear (deployed) | 11.03 | 14.67 | 21.59 | 10.04 | 18.71 | 20.26 | 16.67 | 17.36 | 17.11 | 4.45 | 7.39 | 11.42 | 19.17 |
+| mlp | 8.04 | 12.25 | 19.90 | 7.48 | 16.65 | 18.15 | 14.69 | 15.00 | 14.83 | 5.15 | 6.66 | 7.90 | 17.00 |
+| gbdt | 8.02 | 12.19 | 19.48 | 6.86 | 16.54 | 18.11 | 14.51 | 14.76 | 14.60 | 3.92 | 5.40 | 7.25 | 16.98 |
+
+MAE by fleet size (robots), arrival rate (orders per step), logging allocator, and
+`dist_to_pickup` (steps). From
+`python -m fleet_learning.evaluate learning/models/cost_model_d020_linear.metrics.json`.
+Validation MAE of the three candidates, from `"validation"` of each metrics file:
+`cost_model_d020` (mlp, direct, 32) 15.06, `cost_model_d020_linear` (linear, excess) 17.16,
+`cost_model_d020_nocells` (mlp, direct, 32) 15.42.
+
+With late robots, the free-flow cost is off by 44.76 steps on average, against 21.31 in the Stage
+5 round, so travel time does stray further from distance, as the contract expected. The
+deployable models cut that error by 62% (linear) to 67% (mlp), against 49% to 56% in the Stage 5
+round. The remaining error is also larger: 14.84 to 17.05 steps MAE, against 9.29 to 10.92. As
+in the main rounds, tuning did not pick the model with the lowest validation MAE.
+
+### Final evaluation
+
+Seeds 1-10, fleets 5, 10, 25, arrival rates 0.1 and 0.2, `planning.method: pibt`,
+`execution.delay_probability: 0.2`, each allocator run once: `hungarian`, `cost_aware` with
+weight 8, and `learned` with `cost_model_d020_linear.json` (SHA-256 `a495383f34b5...`, full hash
+in the manifest). Nothing changed after these numbers came in. All tables in this section come
+from
+`python -m fleet_learning.closed_loop report learning/data/05440c6ebe5c/delay020/closed_loop/final`.
+
+| Robots | Rate | Allocator | Runs | Orders/h mean | Orders/h median | Completion mean | Completion p95 | Deadlocked | Frozen | Wall s |
+| --- | --- | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
+| 5 | 0.1 | hungarian | 10 | 139.56 | 139.20 | 1639.4 | 2186.5 | 0 | 0 | 0.41 |
+| 5 | 0.1 | cost_aware | 10 | 140.52 | 140.40 | 1629.7 | 2176.4 | 0 | 0 | 0.72 |
+| 5 | 0.1 | learned | 10 | 139.68 | 140.40 | 1600.3 | 2173.6 | 0 | 0 | 0.73 |
+| 5 | 0.2 | hungarian | 10 | 140.16 | 140.40 | 2488.6 | 2610.4 | 0 | 0 | 0.44 |
+| 5 | 0.2 | cost_aware | 10 | 140.88 | 141.00 | 2770.9 | 2895.7 | 0 | 0 | 0.84 |
+| 5 | 0.2 | learned | 10 | 139.08 | 138.00 | 2485.4 | 2611.2 | 0 | 0 | 0.54 |
+| 10 | 0.1 | hungarian | 10 | 228.96 | 229.20 | 894.5 | 1331.9 | 0 | 0 | 0.71 |
+| 10 | 0.1 | cost_aware | 10 | 234.72 | 235.20 | 854.7 | 1272.1 | 0 | 0 | 1.01 |
+| 10 | 0.1 | learned | 10 | 236.88 | 237.00 | 823.9 | 1266.5 | 0 | 0 | 1.02 |
+| 10 | 0.2 | hungarian | 10 | 234.00 | 233.40 | 1944.5 | 2418.0 | 0 | 0 | 0.78 |
+| 10 | 0.2 | cost_aware | 10 | 231.24 | 231.00 | 1942.3 | 2407.4 | 0 | 0 | 1.17 |
+| 10 | 0.2 | learned | 10 | 234.96 | 237.00 | 1877.2 | 2390.1 | 0 | 0 | 0.89 |
+| 25 | 0.1 | hungarian | 10 | 343.68 | 339.60 | 246.2 | 431.9 | 0 | 0 | 1.61 |
+| 25 | 0.1 | cost_aware | 10 | 335.40 | 334.80 | 282.3 | 502.4 | 0 | 0 | 1.89 |
+| 25 | 0.1 | learned | 10 | 346.44 | 350.40 | 244.8 | 461.1 | 0 | 0 | 2.01 |
+| 25 | 0.2 | hungarian | 10 | 334.68 | 336.00 | 1403.0 | 1916.7 | 0 | 0 | 1.72 |
+| 25 | 0.2 | cost_aware | 10 | 343.56 | 341.40 | 1364.5 | 1882.2 | 0 | 0 | 1.87 |
+| 25 | 0.2 | learned | 10 | 338.88 | 337.80 | 1349.2 | 1902.5 | 0 | 0 | 1.96 |
+
+Orders per hour are deliveries per simulated hour after the 600-step warmup. Completion times are
+means over runs, in steps. Wall s is the wall time of all 10 runs, summed. No run deadlocked,
+froze, or aborted.
+
+Late robots lower throughput in every cell, compared with the Stage 5 round's final runs: by 19%
+to 24% at 5 and 10 robots, 3% to 6% at 25 robots and rate 0.1, and 28% to 29% at 25 robots and
+rate 0.2 (for example `cost_aware` 343.56 against 477.72). At 25 robots and rate 0.1 orders now wait too (p90 order age 77 to 191
+steps, table below), so the three allocators no longer give near-identical results there.
+
+learned minus `hungarian` and learned minus tuned `cost_aware`, `orders_per_hour` per seed,
+median over the 10 seeds with a 95% percentile bootstrap interval (10,000 resamples,
+`numpy.random.default_rng(0)`):
+
+| Robots | Rate | vs hungarian W/T/L | Median | 95% interval | vs cost_aware W/T/L | Median | 95% interval |
+| --- | --- | ---: | ---: | ---: | ---: | ---: | ---: |
+| 5 | 0.1 | 5/1/4 | 1.20 | [-3.60, 3.00] | 3/1/6 | -1.20 | [-3.60, 1.80] |
+| 5 | 0.2 | 3/0/7 | -1.20 | [-3.00, 1.20] | 0/3/7 | -1.20 | [-3.60, 0.00] |
+| 10 | 0.1 | 10/0/0 | 6.60 | [4.80, 9.60] | 5/1/4 | 1.80 | [-3.60, 7.20] |
+| 10 | 0.2 | 5/1/4 | 0.60 | [-3.00, 6.00] | 5/3/2 | 0.60 | [-1.20, 9.60] |
+| 25 | 0.1 | 8/0/2 | 4.20 | [1.20, 9.60] | 7/1/2 | 9.60 | [0.00, 16.20] |
+| 25 | 0.2 | 6/1/3 | 3.60 | [-6.00, 11.40] | 4/0/6 | -1.80 | [-15.60, 4.20] |
+
+Criterion (25 robots, rate 0.2, delay 0.2, interval above 0 against `cost_aware`): not met. The
+median is -1.80 and the interval [-15.60, 4.20] contains 0, so this round shows no difference in
+either direction at that cell.
+
+Against `hungarian`, `learned` wins with an interval above 0 at 10 robots and rate 0.1 (as in the
+Stage 5 round) and at 25 robots and rate 0.1. Against `cost_aware`, no interval lies entirely
+above or below 0. The closest are 25 robots at rate 0.1 (median 9.60, lower end 0.00) and 5
+robots at rate 0.2 (0 wins, 3 ties, 7 losses, upper end 0.00). At 25 robots and rate 0.1,
+weight 8 makes `cost_aware` worse than plain `hungarian` (335.40 against 343.68 mean), so much of
+`learned`'s lead in that cell is the tuned weight doing badly there, not the model doing well.
+The weight was chosen on the mean over all six cells, as section 9 says.
+
+### Selection bias check
+
+`model_io` costs for the pairs `learned` chose in the final runs, against their
+`steps_to_pickup`, after the section 3 filters with margin 1100. Errors in steps; bias is
+predicted minus observed.
+
+| Rows from | Rows | MAE | Bias |
+| --- | ---: | ---: | ---: |
+| offline test | 42669 | 17.05 | 0.67 |
+| final learned runs | 10510 | 18.47 | 0.51 |
+|   n5 r0.1 | 1013 | 10.21 | -2.93 |
+|   n5 r0.2 | 1021 | 10.84 | -3.03 |
+|   n10 r0.1 | 1710 | 14.80 | 0.48 |
+|   n10 r0.2 | 1718 | 15.51 | 2.14 |
+|   n25 r0.1 | 2497 | 20.37 | 2.71 |
+|   n25 r0.2 | 2551 | 27.40 | 0.04 |
+
+The MAE on the model's own choices is 1.42 steps above the offline test (18.47 against 17.05),
+close to the gap in the Stage 5 round (1.16), so the model is not badly fooled overall. Unlike the
+main rounds, the overall bias is not negative. At 25 robots and rate 0.2, the criterion cell, the
+MAE is 27.40, against 21.59 for all 25-robot rows offline (all three rates, so not a
+like-for-like cell). As in the main rounds, that is the cell where the model is least accurate on
+its own choices.
+
+### Order age at assignment
+
+`order_age` at assignment, in steps, over every assignment of the final runs:
+
+| Robots | Rate | Allocator | Assignments | Median | p90 | Max |
+| --- | --- | --- | ---: | ---: | ---: | ---: |
+| 5 | 0.1 | hungarian | 1433 | 1046 | 1960 | 2294 |
+| 5 | 0.1 | cost_aware | 1437 | 1030 | 1944 | 2286 |
+| 5 | 0.1 | learned | 1439 | 1038 | 1929 | 2261 |
+| 5 | 0.2 | hungarian | 1445 | 1418 | 2603 | 2962 |
+| 5 | 0.2 | cost_aware | 1456 | 1403 | 2600 | 2944 |
+| 5 | 0.2 | learned | 1450 | 1420 | 2591 | 2969 |
+| 10 | 0.1 | hungarian | 2359 | 633 | 1139 | 1390 |
+| 10 | 0.1 | cost_aware | 2414 | 620 | 1085 | 1434 |
+| 10 | 0.1 | learned | 2434 | 637 | 1085 | 1331 |
+| 10 | 0.2 | hungarian | 2410 | 1196 | 2190 | 2506 |
+| 10 | 0.2 | cost_aware | 2396 | 1181 | 2172 | 2501 |
+| 10 | 0.2 | learned | 2440 | 1154 | 2139 | 2494 |
+| 25 | 0.1 | hungarian | 3541 | 0 | 128 | 486 |
+| 25 | 0.1 | cost_aware | 3468 | 0 | 191 | 601 |
+| 25 | 0.1 | learned | 3548 | 0 | 77 | 619 |
+| 25 | 0.2 | hungarian | 3550 | 854 | 1662 | 1983 |
+| 25 | 0.2 | cost_aware | 3612 | 832 | 1617 | 1976 |
+| 25 | 0.2 | learned | 3584 | 852 | 1645 | 1954 |
+
+`learned` assigns orders at about the same age as the baselines: in every overloaded cell its
+median is within 27 steps of `cost_aware`'s. It does not reorder the queue the way the Stage 4
+model did.
+
+### Limits of this round
+
+- It was added after two rounds without a win, and the setting (late robots) was picked because
+  it is where a learned cost seemed most likely to help. A win here would have been weaker
+  evidence than a first-round win. The result is a loss at the criterion cell all the same.
+- One delay setting (0.2), one map, one planner, no closures, and no faults.
+- The tuning candidates are within 1.96 orders per hour of each other over all runs (238.44 to
+  240.40), so the choices of weight 8 and of the linear model are close to noise at 60 runs each.
+  Weight 8 is worse than `hungarian` at 25 robots and rate 0.1 in the final runs.
+- Offline errors are not comparable across rounds: the delays change the target, and the margin
+  is 1100 steps here against 1000 in the Stage 5 round.
+- Selection bias: the training data comes from `nearest`, `hungarian`, and `cost_aware`, never
+  from `learned`.
+- 10 seeds per cell. At the criterion cell the interval is 19.80 orders per hour wide.
+
 ## How to reproduce
 
 From the repo root, after the setup in section 6 and the build in CONTRIBUTING.md. Each
@@ -465,6 +692,36 @@ $P -m fleet_learning.closed_loop tune --models learning/models/cost_model_v1.jso
 $P -m fleet_learning.closed_loop final --weight 4 --model learning/models/cost_model_linear.json
 $P -m fleet_learning.closed_loop report learning/data/<commit>/closed_loop/final
 git checkout -
+```
+
+Late-robot round. Its data, tuning, and final runs each went to the folder of the commit they
+ran at (`021b49d`, `3e34797`, `05440c6`); the numbers do not depend on it:
+
+```bash
+P=learning/.venv/bin/python
+
+# Data, with delay 0.2: learning/data/<commit>/delay020.
+git checkout 021b49dfc31b
+$P -m fleet_learning.collect --delay 0.2
+git checkout -
+D=learning/data/021b49dfc31b/delay020
+
+# Models, offline tables, and filter counts.
+$P -m fleet_learning.train --data $D --name cost_model_d020 --margin 1100
+$P -m fleet_learning.train --data $D --name cost_model_d020_linear --margin 1100 --export linear
+$P -m fleet_learning.train --data $D --name cost_model_d020_nocells --margin 1100 --export mlp \
+  --features dist_to_pickup,manhattan_to_pickup,dist_pickup_to_dropoff,robot_on_endpoint,\
+robots_near_robot,robots_near_pickup,robots_in_box,box_free_cells,pickup_assigned,\
+pickup_pending,pending_orders,available_robots,busy_robots,alive_robots
+$P -m fleet_learning.evaluate learning/models/cost_model_d020_linear.metrics.json
+$P -m fleet_learning.dataset $D/runs --margin 1100
+
+# Closed-loop tuning and final runs, with delay 0.2, then the tables again.
+$P -m fleet_learning.closed_loop tune --delay 0.2 --models learning/models/cost_model_d020.json \
+  learning/models/cost_model_d020_linear.json learning/models/cost_model_d020_nocells.json
+$P -m fleet_learning.closed_loop final --delay 0.2 --weight 8 \
+  --model learning/models/cost_model_d020_linear.json
+$P -m fleet_learning.closed_loop report learning/data/<commit>/delay020/closed_loop/final
 ```
 
 `5e92202` sits on the Stage 4 core, and `closed_loop` builds the checked-out C++ tools before

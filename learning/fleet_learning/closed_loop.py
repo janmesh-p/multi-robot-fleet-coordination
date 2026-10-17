@@ -13,6 +13,10 @@ seeds, and names the winners: the highest mean orders_per_hour over all tuning r
 runs hungarian, the tuned cost_aware, and the chosen learned model on the final seeds once.
 `report` prints the tables of a finished phase again. Orders per hour are deliveries per
 simulated hour after warmup; completion times are in steps (one step is one simulated second).
+
+With `--delay 0.2`, for the late-robot round of section 11, every config also sets
+execution.delay_probability, names end in _d020, and the phase goes to
+learning/data/<commit>/delay020/closed_loop/<phase>.
 """
 
 from __future__ import annotations
@@ -97,14 +101,22 @@ def sha256(path: str | Path) -> str:
 
 
 def _cell(
-    name: str, allocator: str, rate: float, weight: float | None, model: Path | None
+    name: str,
+    allocator: str,
+    rate: float,
+    weight: float | None,
+    model: Path | None,
+    delay: float | None,
 ) -> dict[str, Any]:
+    name += collect.delay_suffix(delay)
     changes: dict[str, Any] = {
         "run.name": name,
         "allocation.method": allocator,
         "planning.method": PLANNER,
         "orders.arrival_rate": rate,
     }
+    if delay is not None:
+        changes["execution.delay_probability"] = delay
     if weight is not None:
         changes["allocation.congestion_weight"] = weight
     if model is not None:
@@ -132,28 +144,34 @@ def _check_models(models: Sequence[str | Path], most: int) -> list[Path]:
 
 
 def tune_cells(
-    weights: Sequence[float], models: Sequence[Path], rates: Sequence[float]
+    weights: Sequence[float],
+    models: Sequence[Path],
+    rates: Sequence[float],
+    delay: float | None = None,
 ) -> list[dict[str, Any]]:
     """Every tuning config: cost_aware per weight, then learned per model, each per rate.
 
-    Names follow section 7: tune_cost_aware_w050_r020 and tune_learned_<model>_r020.
+    Names follow section 7: tune_cost_aware_w050_r020 and tune_learned_<model>_r020. With
+    `delay`, every config sets execution.delay_probability and names end in _d020 (section 11).
     """
     cells = []
     for weight in weights:
         for rate in rates:
             name = f"tune_cost_aware_w{weight_code(weight)}_r{collect.rate_code(rate)}"
-            cells.append(_cell(name, "cost_aware", rate, weight, None))
+            cells.append(_cell(name, "cost_aware", rate, weight, None, delay))
     for model in models:
         for rate in rates:
             name = f"tune_learned_{model.stem}_r{collect.rate_code(rate)}"
-            cells.append(_cell(name, "learned", rate, None, model))
+            cells.append(_cell(name, "learned", rate, None, model, delay))
     return cells
 
 
-def final_cells(weight: float, model: Path, rates: Sequence[float]) -> list[dict[str, Any]]:
+def final_cells(
+    weight: float, model: Path, rates: Sequence[float], delay: float | None = None
+) -> list[dict[str, Any]]:
     """The final configs: hungarian, cost_aware at `weight`, and learned with `model`, per rate.
 
-    Named like final_learned_r010 (section 7).
+    Named like final_learned_r010 (section 7), or final_learned_r010_d020 with `delay`.
     """
     cells = []
     for allocator in FINAL_ALLOCATORS:
@@ -166,6 +184,7 @@ def final_cells(weight: float, model: Path, rates: Sequence[float]) -> list[dict
                     rate,
                     weight if allocator == "cost_aware" else None,
                     model if allocator == "learned" else None,
+                    delay,
                 )
             )
     return cells
@@ -202,10 +221,15 @@ def run_phase(
 
     Like collect.collect: refuses a dirty tree unless `allow_dirty`, builds the C++ tools unless
     `run_sweep` is given, and deletes traces unless `keep_traces`. Output goes to
-    <data_root>/<commit>/closed_loop/<phase>, by default under learning/data.
+    <data_root>/<commit>/closed_loop/<phase>, by default under learning/data, or to
+    <data_root>/<commit>/delay020/closed_loop/<phase> when the cells set a delay of 0.2.
     """
     started = time.monotonic()
     repo = Path(repo).resolve()
+    delays = {cell["changes"].get("execution.delay_probability") for cell in cells}
+    if len(delays) != 1:
+        raise ValueError(f"cells: one phase runs one delay setting, got {delays}")
+    (delay,) = delays
     seeds = check_seeds(phase, SEEDS[phase] if seeds is None else seeds)
     fleet = collect._check(fleet, "fleet sizes", least=1)
     cores = os.cpu_count() or 1
@@ -224,7 +248,7 @@ def run_phase(
     if not base_path.is_file():
         raise ClosedLoopError(f"{base_path} not found. Run from the repo root.")
     root = repo / collect.DATA_ROOT if data_root is None else Path(data_root).resolve()
-    phase_dir = root / commit / "closed_loop" / phase
+    phase_dir = collect.round_dir(root / commit, delay) / "closed_loop" / phase
     if phase_dir.exists():
         raise ClosedLoopError(f"{phase_dir} already exists. Delete or move it to run again.")
     state = f"dirty, {len(changes)} changes" if changes else "clean"
@@ -276,6 +300,7 @@ def run_phase(
         "phase": phase,
         "base_config": str(collect.BASE_CONFIG),
         "planner": PLANNER,
+        "delay_probability": delay,
         "fleet_sizes": list(fleet),
         "seeds": list(seeds),
         "cells": [{k: v for k, v in cell.items() if k != "changes"} for cell in cells],
@@ -533,9 +558,11 @@ def _seeds_line(manifest: Mapping[str, Any]) -> str:
         f"{name}: {entry['file']} (SHA-256 {entry['sha256'][:12]})"
         for name, entry in manifest["models"].items()
     )
+    delay = manifest.get("delay_probability")
+    delay_text = "" if delay is None else f", execution.delay_probability {delay:g}"
     return (
-        f"Commit {manifest['commit']}, planner {manifest['planner']}, seeds {seeds}, fleets "
-        f"{fleets}. Models: {models}."
+        f"Commit {manifest['commit']}, planner {manifest['planner']}{delay_text}, seeds {seeds}, "
+        f"fleets {fleets}. Models: {models}."
     )
 
 
@@ -695,7 +722,8 @@ def report(phase_dir: str | Path, repo: str | Path = ".") -> str:
 
 def _phase_dir(manifest: Mapping[str, Any], repo: Path, data_root: Path | None) -> Path:
     root = repo / collect.DATA_ROOT if data_root is None else data_root.resolve()
-    return root / manifest["commit"] / "closed_loop" / manifest["phase"]
+    commit_dir = collect.round_dir(root / manifest["commit"], manifest.get("delay_probability"))
+    return commit_dir / "closed_loop" / manifest["phase"]
 
 
 def _weights_arg(text: str) -> tuple[float, ...]:
@@ -745,11 +773,23 @@ def main(argv: list[str] | None = None) -> int:
             default=None,
             help="seeds (default: 2000-2009 for tune, 1-10 for final; 3000 and up for plumbing)",
         )
+        phase.add_argument(
+            "--delay",
+            type=collect._arg(collect.parse_delay),
+            default=None,
+            help="execution.delay_probability for every config, for the late-robot round of "
+            "section 11 (default: unset)",
+        )
         phase.add_argument("--jobs", type=collect._arg(collect._jobs), default=None)
         phase.add_argument("--keep-traces", action="store_true")
         phase.add_argument("--allow-dirty", action="store_true")
     show = sub.add_parser("report", help="print the tables of a finished phase")
-    show.add_argument("phase_dir", type=Path, help="learning/data/<commit>/closed_loop/<phase>")
+    show.add_argument(
+        "phase_dir",
+        type=Path,
+        help="learning/data/<commit>/closed_loop/<phase> or "
+        "learning/data/<commit>/delay020/closed_loop/<phase>",
+    )
     args = parser.parse_args(argv)
 
     repo = Path.cwd()
@@ -759,12 +799,12 @@ def main(argv: list[str] | None = None) -> int:
             return 0
         if args.phase == "tune":
             models = _check_models(args.models, MAX_MODELS)
-            cells = tune_cells(args.weights, models, args.rates)
+            cells = tune_cells(args.weights, models, args.rates, args.delay)
             extra = {"weights": list(args.weights)}
         else:
             weight_code(args.weight)
             (model,) = _check_models([args.model], 1)
-            cells = final_cells(args.weight, model, args.rates)
+            cells = final_cells(args.weight, model, args.rates, args.delay)
             extra = {"weight": args.weight}
         manifest = run_phase(
             args.phase,
