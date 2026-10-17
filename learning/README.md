@@ -3,8 +3,42 @@
 The contract is [docs/learning_track.md](../docs/learning_track.md). Section numbers below refer
 to it. One step is one simulated second.
 
-Status: Stage 4 (pibt). The success criterion below was committed before the final runs
-(commit `8133d47`).
+Status: Stage 5 rerun in progress. The Stage 4 round below is complete; its success criterion
+was committed before its final runs (commit `8133d47`). The Stage 5 round's criterion and
+tuning results are in [Stage 5 round](#stage-5-round-before-the-final-runs), committed before
+its final runs.
+
+## Stage 5 round, before the final runs
+
+Collection at commit `6c0e93405694` (Stage 5), the same grid and seeds as the Stage 4 round:
+1080 runs, none aborted, deadlocked, or frozen. Margin 1000 steps: the longest kept
+`steps_to_pickup` is 457 steps, and 1000 is the smallest multiple of 100 that is at least twice
+that. `order_age` is not a model input (section 6). From
+`python -m fleet_learning.dataset learning/data/6c0e93405694/runs --margin 1000`.
+
+Success criterion, the same as the Stage 4 round, written before the final runs:
+
+> At 25 robots and arrival rate 0.2, the per-seed difference in `orders_per_hour` (learned minus
+> tuned `cost_aware`, seeds 1-10) has a median whose 95% bootstrap interval lies entirely above 0.
+
+Closed-loop tuning, seeds 2000-2009, fleets 5, 10, 25, arrival rates 0.1 and 0.2,
+`planning.method: pibt`, 60 runs per candidate. Mean `orders_per_hour`:
+
+| Candidate | Runs | All runs | n5 r0.1 | n5 r0.2 | n10 r0.1 | n10 r0.2 | n25 r0.1 | n25 r0.2 |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
+| cost_aware w=1 | 60 | 299.36 | 175.32 | 173.40 | 306.84 | 301.92 | 365.76 | 472.92 |
+| cost_aware w=2 | 60 | 299.24 | 175.08 | 174.96 | 305.88 | 304.08 | 367.08 | 468.36 |
+| cost_aware w=4 | 60 | 299.94 | 174.96 | 175.56 | 306.12 | 303.60 | 366.12 | 473.28 |
+| cost_aware w=8 | 60 | 299.26 | 175.20 | 174.48 | 308.64 | 302.28 | 366.60 | 468.36 |
+| cost_aware w=16 | 60 | 298.68 | 175.20 | 174.48 | 307.08 | 301.44 | 365.64 | 468.24 |
+| learned cost_model_s5 | 60 | 298.14 | 174.12 | 174.48 | 306.96 | 300.84 | 365.88 | 466.56 |
+| learned cost_model_s5_linear | 60 | 298.42 | 174.96 | 174.84 | 307.20 | 300.60 | 365.16 | 467.76 |
+| learned cost_model_s5_nocells | 60 | 299.76 | 175.68 | 175.68 | 307.56 | 301.92 | 366.48 | 471.24 |
+
+From `python -m fleet_learning.closed_loop report learning/data/85a7438f2a57/closed_loop/tune`.
+
+Chosen for the final runs: `cost_aware` with `congestion_weight` 4, and `learned` with
+`cost_model_s5_nocells.json`.
 
 ## Result
 
