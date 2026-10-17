@@ -72,6 +72,7 @@ GBDT_PARAMS: dict[str, Any] = {
 }
 
 COMMIT_PATTERN = re.compile(r"[0-9a-f]{12}")
+ROUND_PATTERN = re.compile(r"delay[0-9]{3}")  # a round folder inside a collection (section 11)
 NAME_PATTERN = re.compile(r"[A-Za-z0-9_-]+")
 
 Log = Callable[[str], None]
@@ -361,14 +362,17 @@ def export_model(
 
 
 def data_commit(data_dir: str | Path) -> str:
-    """The commit a collection belongs to: the name of `learning/data/<commit>` (section 7)."""
-    name = Path(data_dir).resolve().name
-    if not COMMIT_PATTERN.fullmatch(name):
+    """The commit a collection belongs to: the name of `learning/data/<commit>` (section 7), or
+    of the commit folder above a round folder such as `learning/data/<commit>/delay020`."""
+    path = Path(data_dir).resolve()
+    if ROUND_PATTERN.fullmatch(path.name):
+        path = path.parent
+    if not COMMIT_PATTERN.fullmatch(path.name):
         raise ValueError(
-            f"{data_dir}: expected learning/data/<commit>, where <commit> is the first 12 "
-            "characters of a commit hash (section 7)"
+            f"{data_dir}: expected learning/data/<commit> or learning/data/<commit>/delay<code>, "
+            "where <commit> is the first 12 characters of a commit hash (section 7)"
         )
-    return name
+    return path.name
 
 
 def _jsonable(value: Any) -> Any:
@@ -502,7 +506,12 @@ def main(argv: list[str] | None = None) -> int:
         "collection, choose on the validation split, score on the test split, and export the "
         "chosen model.",
     )
-    parser.add_argument("--data", type=Path, required=True, help="learning/data/<commit>")
+    parser.add_argument(
+        "--data",
+        type=Path,
+        required=True,
+        help="learning/data/<commit>, or learning/data/<commit>/delay020 for a round folder",
+    )
     parser.add_argument(
         "--name", required=True, help="model name: writes <out>/<name>.json and .metrics.json"
     )

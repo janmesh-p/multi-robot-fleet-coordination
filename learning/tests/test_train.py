@@ -226,6 +226,14 @@ def test_cli_rejects_bad_collections(tmp_path, capsys, make, message):
     assert not (tmp_path / "m").exists()
 
 
+def test_data_commit_reads_round_folders(tmp_path):
+    assert train.data_commit(tmp_path / "0123456789ab") == "0123456789ab"
+    assert train.data_commit(tmp_path / "0123456789ab" / "delay020") == "0123456789ab"
+    for path in (tmp_path / "delay020", tmp_path / "0123456789ab" / "delay20"):
+        with pytest.raises(ValueError, match="commit"):
+            train.data_commit(path)
+
+
 def test_cli_before_stage_3_exits_1(tmp_path, capsys):
     data = collection(tmp_path)
     for path in (data / "runs").rglob("assignments.csv"):

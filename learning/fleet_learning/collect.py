@@ -8,6 +8,11 @@ Every logging allocator runs since Stage 3, but pibt arrives in Stage 4. Until t
 plumbing collection of section 11 uses independent_astar:
 
     python -m fleet_learning.collect --planner independent_astar --seeds 3000-3004
+
+The late-robot round of section 11 sets execution.delay_probability in every config, keeps its
+data under learning/data/<commit>/delay020/, and ends run names in _d020:
+
+    python -m fleet_learning.collect --delay 0.2
 """
 
 from __future__ import annotations
@@ -16,6 +21,7 @@ import argparse
 import copy
 import json
 import os
+import re
 import shlex
 import subprocess
 import sys
@@ -122,9 +128,45 @@ def rate_code(rate: float) -> str:
     return f"{hundredths:03d}"
 
 
-def run_name(allocator: str, rate: float) -> str:
-    """`collect_<allocator>_r<rate x 100, three digits>`, for example collect_hungarian_r010."""
-    return f"collect_{allocator}_r{rate_code(rate)}"
+def delay_code(probability: float) -> str:
+    """A delay probability (chance per step that a robot misses it) times 100, as three digits:
+    0.2 gives "020"."""
+    hundredths = round(probability * 100)
+    if not 1 <= hundredths <= 99 or abs(probability * 100 - hundredths) > 1e-9:
+        raise ValueError(
+            f"delay probability {probability}: use a multiple of 0.01 from 0.01 to 0.99"
+        )
+    return f"{hundredths:03d}"
+
+
+def delay_suffix(delay: float | None) -> str:
+    """`_d<delay x 100, three digits>`, for example _d020, or "" without a delay (section 11)."""
+    return "" if delay is None else f"_d{delay_code(delay)}"
+
+
+def round_dir(commit_dir: Path, delay: float | None) -> Path:
+    """Where a round's data goes: `commit_dir`, or `commit_dir`/delay020 with a delay."""
+    return commit_dir if delay is None else commit_dir / f"delay{delay_code(delay)}"
+
+
+def _is_round_dir(path: Path) -> bool:
+    return path.is_dir() and re.fullmatch(r"delay[0-9]{3}", path.name) is not None
+
+
+def run_name(allocator: str, rate: float, delay: float | None = None) -> str:
+    """`collect_<allocator>_r<rate x 100, three digits>`, for example collect_hungarian_r010,
+    then `_d<delay x 100, three digits>` with a delay: collect_hungarian_r010_d020."""
+    return f"collect_{allocator}_r{rate_code(rate)}{delay_suffix(delay)}"
+
+
+def parse_delay(text: str) -> float:
+    """A delay probability such as "0.2", a multiple of 0.01 from 0.01 to 0.99."""
+    try:
+        delay = float(text)
+    except ValueError:
+        raise ValueError(f"{text!r}: expected a probability such as 0.2") from None
+    delay_code(delay)
+    return delay
 
 
 def parse_rates(text: str) -> tuple[float, ...]:
@@ -174,18 +216,26 @@ def make_config(
     return config
 
 
-def grid(allocators: Sequence[str], rates: Sequence[float], planner: str) -> list[dict[str, Any]]:
-    """The changes for each cell of the section 7 grid: allocators outer, arrival rates inner."""
-    return [
-        {
-            "run.name": run_name(allocator, rate),
-            "allocation.method": allocator,
-            "planning.method": planner,
-            "orders.arrival_rate": rate,
-        }
-        for allocator in allocators
-        for rate in rates
-    ]
+def grid(
+    allocators: Sequence[str], rates: Sequence[float], planner: str, delay: float | None = None
+) -> list[dict[str, Any]]:
+    """The changes for each cell of the section 7 grid: allocators outer, arrival rates inner.
+
+    With `delay`, every cell also sets `execution.delay_probability` (section 11).
+    """
+    cells = []
+    for allocator in allocators:
+        for rate in rates:
+            cell = {
+                "run.name": run_name(allocator, rate, delay),
+                "allocation.method": allocator,
+                "planning.method": planner,
+                "orders.arrival_rate": rate,
+            }
+            if delay is not None:
+                cell["execution.delay_probability"] = delay
+            cells.append(cell)
+    return cells
 
 
 @dataclass
@@ -286,6 +336,7 @@ def collect(
     planner: str = "pibt",
     fleet: Sequence[int] = FLEET_SIZES,
     seeds: Sequence[int] = SEEDS,
+    delay: float | None = None,
     jobs: int | None = None,
     keep_traces: bool = False,
     allow_dirty: bool = False,
@@ -295,8 +346,10 @@ def collect(
     """Run one collection, the six steps of section 7, and return its manifest.
 
     `repo` is the repo root. Data goes to <data_root>/<commit>, by default
-    learning/data/<commit>. With `run_sweep` given, that tool runs the sweeps and nothing is
-    built. Raises CollectError, or ValueError for bad arguments.
+    learning/data/<commit>. With `delay` (a probability per step), every config sets
+    execution.delay_probability, and data goes to <data_root>/<commit>/delay<delay x 100>
+    (section 11). With `run_sweep` given, that tool runs the sweeps and nothing is built.
+    Raises CollectError, or ValueError for bad arguments.
     """
     started = time.monotonic()
     repo = Path(repo).resolve()
@@ -305,7 +358,7 @@ def collect(
     _check([planner], "planner", PLANNERS)
     fleet = _check(fleet, "fleet sizes", least=1)
     seeds = _check(seeds, "seeds", least=0)
-    cells = grid(allocators, rates, planner)
+    cells = grid(allocators, rates, planner, delay)
     cores = os.cpu_count() or 1
     jobs = min(cores, len(cells)) if jobs is None else jobs
     if not 1 <= jobs <= cores:
@@ -322,8 +375,9 @@ def collect(
     base_path = repo / BASE_CONFIG
     if not base_path.is_file():
         raise CollectError(f"{base_path} not found. Run from the repo root.")
-    data_dir = (repo / DATA_ROOT if data_root is None else Path(data_root).resolve()) / commit
-    if data_dir.exists():
+    root = repo / DATA_ROOT if data_root is None else Path(data_root).resolve()
+    data_dir = round_dir(root / commit, delay)
+    if data_dir.exists() and any(not _is_round_dir(path) for path in data_dir.iterdir()):
         raise CollectError(
             f"{data_dir} already exists, and each commit gets one collection (section 7). "
             "Delete or move it to collect again."
@@ -375,6 +429,7 @@ def collect(
         "allocators": list(allocators),
         "arrival_rates": list(rates),
         "planner": planner,
+        "delay_probability": delay,
         "fleet_sizes": list(fleet),
         "seeds": list(seeds),
         "configs": [str(sweep.config.relative_to(data_dir)) for sweep in sweeps],
@@ -445,6 +500,13 @@ def main(argv: list[str] | None = None) -> int:
         help="seeds, a list or a range (default: 1000-1039)",
     )
     parser.add_argument(
+        "--delay",
+        type=_arg(parse_delay),
+        default=None,
+        help="execution.delay_probability for every config, for the late-robot round of "
+        "section 11; data goes to learning/data/<commit>/delay<delay x 100> (default: unset)",
+    )
+    parser.add_argument(
         "--jobs",
         type=_arg(_jobs),
         default=None,
@@ -467,6 +529,7 @@ def main(argv: list[str] | None = None) -> int:
             planner=args.planner,
             fleet=args.fleet,
             seeds=args.seeds,
+            delay=args.delay,
             jobs=args.jobs,
             keep_traces=args.keep_traces,
             allow_dirty=args.allow_dirty,
