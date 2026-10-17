@@ -5,7 +5,10 @@ to it. One step is one simulated second.
 
 Status: Stage 5 (pibt). Two rounds, reported side by side: the Stage 4 round and the Stage 5
 rerun. Each round's success criterion was committed before its final runs: commit `8133d47`
-for Stage 4 and commit `6471ec6` for Stage 5.
+for Stage 4 and commit `6471ec6` for Stage 5. A third round with late robots
+(`execution.delay_probability: 0.2`) is in progress; see
+[Late-robot round](#late-robot-round-delay-02). Its criterion and tuning results are committed
+before its final runs.
 
 ## Result
 
@@ -394,6 +397,59 @@ passed over, not how long the queue is.
   (Stage 4) and 19.20 (Stage 5) orders per hour wide.
 - The Stage 4 model used `order_age`, which changes which orders get served, not only how long a
   trip takes. The question in section 1 is about trip cost; the Stage 5 model does not read it.
+
+## Late-robot round (delay 0.2)
+
+This round was added to the contract on Oct 17 (section 11), after the Stage 4 and Stage 5
+rounds found no win for `learned`. It was chosen after two rounds without a win, so a win here
+is weaker evidence than a win in the first round would have been. A loss is reported the same
+way.
+
+The protocol of sections 7 to 9 is unchanged, except that every config, in the collection, the
+tuning, and the final runs, also sets `execution.delay_probability: 0.2`: a robot misses a step
+with probability 0.2, and the others wait for it under the Stage 5 traffic rules. Same grid,
+seeds and splits, model families without `order_age`, `cost_aware` weights 1 to 16, and at most
+5 learned models. Data is under `learning/data/<commit>/delay020/`, and run names end in `_d020`.
+
+### Before the final runs
+
+Collection at commit `021b49dfc31b` (Stage 5 core; only the learning code differs from
+`origin/main`), `learning/data/021b49dfc31b/delay020/`: 1080 runs, none aborted. 238099
+assignments logged. Margin 1100 steps: the longest kept `steps_to_pickup` is 548 steps, and 1100
+is the smallest multiple of 100 that is at least twice that. No row inside the margin has
+`steps_to_pickup = -1`. From
+`python -m fleet_learning.dataset learning/data/021b49dfc31b/delay020/runs --margin 1100`.
+
+Success criterion, the same as in the main rounds, with delay 0.2 in every run, written before
+the final runs:
+
+> At 25 robots and arrival rate 0.2, with `execution.delay_probability: 0.2`, the per-seed
+> difference in `orders_per_hour` (learned minus tuned `cost_aware`, seeds 1-10) has a median
+> whose 95% bootstrap interval lies entirely above 0.
+
+Models, trained as in the Stage 5 round, with margin 1100 (commit `3e34797`):
+`cost_model_d020.json` (best deployable), `cost_model_d020_linear.json`, and
+`cost_model_d020_nocells.json`.
+
+Closed-loop tuning, seeds 2000-2009, fleets 5, 10, 25, arrival rates 0.1 and 0.2,
+`planning.method: pibt`, delay 0.2, 60 runs per candidate. Mean `orders_per_hour`:
+
+| Candidate | Runs | All runs | n5 r0.1 | n5 r0.2 | n10 r0.1 | n10 r0.2 | n25 r0.1 | n25 r0.2 |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
+| cost_aware w=1 | 60 | 239.02 | 139.20 | 138.60 | 236.16 | 234.24 | 344.04 | 341.88 |
+| cost_aware w=2 | 60 | 238.90 | 141.72 | 139.80 | 236.16 | 236.28 | 340.20 | 339.24 |
+| cost_aware w=4 | 60 | 238.44 | 141.12 | 138.96 | 236.28 | 236.40 | 341.76 | 336.12 |
+| cost_aware w=8 | 60 | 239.26 | 139.68 | 138.60 | 235.08 | 237.24 | 342.36 | 342.60 |
+| cost_aware w=16 | 60 | 238.94 | 139.68 | 138.60 | 236.64 | 237.24 | 340.80 | 340.68 |
+| learned cost_model_d020 | 60 | 239.20 | 139.56 | 140.04 | 236.88 | 234.96 | 344.28 | 339.48 |
+| learned cost_model_d020_linear | 60 | 240.40 | 139.56 | 139.92 | 237.84 | 237.00 | 343.92 | 344.16 |
+| learned cost_model_d020_nocells | 60 | 239.36 | 138.72 | 140.16 | 236.40 | 235.08 | 345.12 | 340.68 |
+
+From
+`python -m fleet_learning.closed_loop report learning/data/3e34797e8b66/delay020/closed_loop/tune`.
+
+Chosen for the final runs: `cost_aware` with `congestion_weight` 8, and `learned` with
+`cost_model_d020_linear.json`.
 
 ## How to reproduce
 
