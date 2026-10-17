@@ -8,8 +8,8 @@ jobs:
   python:
     runs-on: ubuntu-22.04
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
+      - uses: actions/checkout@v5
+      - uses: actions/setup-python@v6
         with:
           python-version: "3.12"  # the same version as on the learning track machine (3.12.3)
       - name: Install
@@ -26,7 +26,7 @@ jobs:
   core:
     runs-on: ubuntu-22.04
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
       - name: Install build dependencies
         run: |
           sudo apt-get update
@@ -35,7 +35,7 @@ jobs:
         run: |
           cmake -S fleet_core -B build -G Ninja -DCMAKE_BUILD_TYPE=Release -DFLEET_SANITIZE=OFF
           cmake --build build
-      - uses: actions/setup-python@v5
+      - uses: actions/setup-python@v6
         with:
           python-version: "3.12"  # the same version as the python job
       - name: Install
