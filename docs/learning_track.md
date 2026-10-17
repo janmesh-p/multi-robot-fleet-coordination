@@ -539,6 +539,20 @@ When Stage 5 lands: recollect with `pibt` on the new commit, retrain without `or
 `cost_aware` on the new grid (section 9), rerun the final evaluation with the same protocol, and
 update the write-up. Report the Stage 4 round and this one side by side.
 
+Late-robot round, fixed on Oct 17 after the Stage 5 round: the whole protocol of sections 7 to 9
+once more, with every config also setting `execution.delay_probability: 0.2`. Robots then miss
+one step in five and wait for each other under the traffic rules, so travel time strays further
+from distance than in the rounds before. Everything else stays as it was: the grid, the seeds and
+splits, the model families without `order_age`, the `cost_aware` weights, at most 5 learned
+models, and the success criterion, now with delay 0.2 in every run. Commit the criterion to
+`learning/README.md` before the final runs.
+
+- Keep its data apart: everything goes under `learning/data/<commit>/delay020/`, and run names
+  end in `_d020`, for example `collect_hungarian_r010_d020`.
+- Report it in its own section of `learning/README.md`, after the main rounds, with the same
+  tables. Say that it was chosen after two rounds without a win, so a win here is weaker evidence
+  than a win in the first round would have been. Report a loss the same way.
+
 After Stage 6: the same again. Optional, in this order:
 
 1. One more collection round with `learned` added to the allocator grid, then retrain. Data from
