@@ -37,6 +37,12 @@ FAMILIES: tuple[str, ...] = ("free_flow", "linear", "mlp", "gbdt")
 DEPLOYABLE: tuple[str, ...] = ("free_flow", "linear", "mlp")  # format v1 cannot hold trees
 TARGETS: tuple[str, ...] = ("direct", "excess")  # steps_to_pickup, or minus dist_to_pickup
 BASE_FEATURE = "dist_to_pickup"
+# From the Stage 5 rerun on, order_age is not a model input (section 6): it is the same for every
+# robot that could take an order, so it can only reorder the queue.
+EXCLUDED_FEATURES: tuple[str, ...] = ("order_age",)
+MODEL_FEATURES: tuple[str, ...] = tuple(
+    name for name in schema.FEATURE_COLUMNS if name not in EXCLUDED_FEATURES
+)
 
 DEFAULT_HIDDEN: tuple[tuple[int, ...], ...] = ((32,), (64, 64), (64, 64, 64))
 DEFAULT_SEED = 0
@@ -168,11 +174,15 @@ class FittedModel:
 
 
 def check_features(features: Sequence[str]) -> tuple[str, ...]:
-    """Raise ValueError unless `features` are 1 to 32 distinct feature columns (section 6)."""
+    """Raise ValueError unless `features` are 1 to 32 distinct feature columns (section 6),
+    none of them excluded as model inputs."""
     features = tuple(features)
     unknown = [name for name in features if name not in schema.FEATURE_COLUMNS]
     if unknown:
         raise ValueError(f"not feature columns of assignments.csv: {', '.join(unknown)}")
+    excluded = [name for name in features if name in EXCLUDED_FEATURES]
+    if excluded:
+        raise ValueError(f"not a model input from the Stage 5 rerun on: {', '.join(excluded)}")
     if not 1 <= len(features) <= model_io.MAX_FEATURES or len(set(features)) != len(features):
         raise ValueError(f"features must be 1 to {model_io.MAX_FEATURES} distinct names")
     return features
@@ -240,7 +250,7 @@ def fit_gbdt(
 
 def fit_candidates(
     train: pd.DataFrame,
-    features: Sequence[str] = schema.FEATURE_COLUMNS,
+    features: Sequence[str] = MODEL_FEATURES,
     hidden_sizes: Sequence[Sequence[int]] = DEFAULT_HIDDEN,
     seed: int = DEFAULT_SEED,
 ) -> Iterator[FittedModel]:
@@ -282,7 +292,7 @@ class TrainingResult:
 
 def train_models(
     splits: Mapping[str, pd.DataFrame],
-    features: Sequence[str] = schema.FEATURE_COLUMNS,
+    features: Sequence[str] = MODEL_FEATURES,
     hidden_sizes: Sequence[Sequence[int]] = DEFAULT_HIDDEN,
     seed: int = DEFAULT_SEED,
     export: str = "best",
@@ -384,7 +394,7 @@ def train(
     name: str,
     out_dir: str | Path = DEFAULT_OUT,
     *,
-    features: Sequence[str] = schema.FEATURE_COLUMNS,
+    features: Sequence[str] = MODEL_FEATURES,
     hidden_sizes: Sequence[Sequence[int]] = DEFAULT_HIDDEN,
     seed: int = DEFAULT_SEED,
     margin: int = dataset.MARGIN_STEPS,
@@ -502,8 +512,8 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument(
         "--features",
         type=lambda text: tuple(text.split(",")),
-        default=schema.FEATURE_COLUMNS,
-        help="comma-separated feature columns (default: all of them)",
+        default=MODEL_FEATURES,
+        help="comma-separated feature columns (default: all of them except order_age)",
     )
     parser.add_argument(
         "--hidden",

@@ -5,7 +5,7 @@ import numpy as np
 import pytest
 import synthetic
 
-from fleet_learning import dataset, evaluate, model_io, schema, train
+from fleet_learning import dataset, evaluate, model_io, train
 
 SEEDS = {"train": range(1000, 1010), "validation": range(1020, 1024), "test": range(1030, 1034)}
 HIDDEN = ((16,), (8, 8))
@@ -100,6 +100,7 @@ def test_costs_are_clamped(result, splits):
         (("steps_to_pickup",), "not feature columns"),
         ((), "1 to 32 distinct names"),
         (("dist_to_pickup", "dist_to_pickup"), "distinct"),
+        (("dist_to_pickup", "order_age"), "not a model input from the Stage 5 rerun on: order_age"),
     ],
 )
 def test_features_come_only_from_feature_columns(features, message):
@@ -132,7 +133,7 @@ def test_export_matches_scikit_learn_on_test_rows(tmp_path, result, splits, name
 
 def test_mlp_export_transposes_weights(result):
     layers = candidate(result, "mlp_excess_8x8").to_model_file()["layers"]
-    assert [np.shape(layer["weights"]) for layer in layers] == [(8, 19), (8, 8), (1, 8)]
+    assert [np.shape(layer["weights"]) for layer in layers] == [(8, 18), (8, 8), (1, 8)]
     assert [layer["activation"] for layer in layers] == ["relu", "relu", "identity"]
 
 
@@ -178,7 +179,8 @@ def test_cli_writes_model_and_metrics(tmp_path, capsys):
     assert data_info["seeds"] == {"train": [1000, 1001], "validation": [1020], "test": [1030]}
     assert data_info["rows"] == {"train": 400, "validation": 200, "test": 200}
     assert sum(group["kept"] for group in data_info["filters"]) == 800
-    assert metrics["features"] == list(schema.FEATURE_COLUMNS)
+    assert metrics["features"] == list(train.MODEL_FEATURES)
+    assert "order_age" not in model["features"]
     assert metrics["random_seed"] == 0
     assert [c["name"] for c in metrics["candidates"]] == [
         "free_flow",
