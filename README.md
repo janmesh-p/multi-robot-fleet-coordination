@@ -432,6 +432,10 @@ docs/              learning track spec: a learned travel-time cost for allocatio
 
 How to contribute: [CONTRIBUTING.md](CONTRIBUTING.md).
 
+## License
+
+Apache License 2.0. See [LICENSE](LICENSE).
+
 ## Stages
 
 | Stage | Scope | Status |
