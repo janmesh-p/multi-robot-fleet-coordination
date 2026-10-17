@@ -42,7 +42,7 @@ SEEDS: dict[str, tuple[int, ...]] = {
 }
 FLEET_SIZES: tuple[int, ...] = (5, 10, 25)
 ARRIVAL_RATES: tuple[float, ...] = (0.1, 0.2)  # orders per step
-WEIGHTS: tuple[float, ...] = (0.25, 0.5, 1.0, 2.0, 4.0)  # allocation.congestion_weight
+WEIGHTS: tuple[float, ...] = (1.0, 2.0, 4.0, 8.0, 16.0)  # allocation.congestion_weight
 MAX_MODELS = 5
 PLANNER = "pibt"
 FINAL_ALLOCATORS: tuple[str, ...] = ("hungarian", "cost_aware", "learned")
@@ -84,10 +84,10 @@ class ClosedLoopError(RuntimeError):
 
 
 def weight_code(weight: float) -> str:
-    """A congestion weight times 100, as three digits: 0.5 gives "050", 4 gives "400"."""
+    """A congestion weight times 100, at least three digits: 0.5 gives "050", 16 gives "1600"."""
     hundredths = round(weight * 100)
-    if not 1 <= hundredths <= 999 or abs(weight * 100 - hundredths) > 1e-9:
-        raise ValueError(f"weight {weight}: use a multiple of 0.01 from 0.01 to 9.99")
+    if not 1 <= hundredths <= 99999 or abs(weight * 100 - hundredths) > 1e-9:
+        raise ValueError(f"weight {weight}: use a multiple of 0.01 from 0.01 to 999.99")
     return f"{hundredths:03d}"
 
 
@@ -721,7 +721,7 @@ def main(argv: list[str] | None = None) -> int:
         "--weights",
         type=_weights_arg,
         default=WEIGHTS,
-        help="cost_aware congestion weights (default: 0.25,0.5,1,2,4)",
+        help="cost_aware congestion weights (default: 1,2,4,8,16)",
     )
     final = sub.add_parser("final", help="the final runs, once, with the tuned choices")
     final.add_argument("--weight", type=float, required=True, help="the tuned cost_aware weight")

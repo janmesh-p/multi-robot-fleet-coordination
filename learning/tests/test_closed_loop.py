@@ -113,7 +113,8 @@ def test_names_follow_section_7(models):
     assert closed_loop.weight_code(0.5) == "050"
     assert closed_loop.weight_code(4) == "400"
     assert closed_loop.weight_code(0.25) == "025"
-    for weight in (0.0, 0.125, 10.0):
+    assert closed_loop.weight_code(16) == "1600"
+    for weight in (0.0, 0.125, 1000.0):
         with pytest.raises(ValueError, match="multiple of 0.01"):
             closed_loop.weight_code(weight)
     names = [c["name"] for c in closed_loop.tune_cells((0.5,), models[:1], (0.1, 0.2))]
