@@ -144,14 +144,6 @@ Simulation::Simulation(const Config& config) : config_(config), map_(buildMap(co
   // that stage.
   makeAllocator(config_);  // learned: rejects a bad model file now, naming the field
   if (const auto gap = planningRequirementGap(config_)) unsupported(*gap);
-  if (config_.faults.packet_loss > 0.0) unsupported("faults.packet_loss arrives in Stage 6");
-  for (const FaultEvent& e : config_.faults.events) {
-    const bool cells = e.type == FaultType::kBlockCells || e.type == FaultType::kUnblockCells;
-    if (!cells) {
-      unsupported(std::string("faults.events type ") + std::string(toString(e.type)) +
-                  " arrives in Stage 6");
-    }
-  }
 
   if (map_.pickups().empty() || map_.dropoffs().empty()) {
     unsupported("the map needs at least one pickup 'P' and one dropoff 'D' station");
@@ -200,8 +192,14 @@ RunResult Simulation::run(const std::optional<std::filesystem::path>& out_dir) c
   const auto wall_start = std::chrono::steady_clock::now();
   const uint64_t seed = config_.run.seed;
 
+  ExecutorFaults link;
+  link.packet_loss = config_.faults.packet_loss;
+  link.link_seed = deriveSeed(seed, rng_stream::kLink);
+  link.safe_stop_after = config_.faults.heartbeat_timeout_steps;
+  link.rescue_after = config_.faults.rescue_steps;
   GridExecutor robots(map_, spawn_, config_.orders.service_steps,
-                      config_.execution.delay_probability, deriveSeed(seed, rng_stream::kDelays));
+                      config_.execution.delay_probability, deriveSeed(seed, rng_stream::kDelays),
+                      link);
   FleetManager fleet(config_, WorldModel(map_, spawn_));
   OrderGenerator orders(map_, config_.orders.arrival_rate, deriveSeed(seed, rng_stream::kOrders));
   InvariantChecker checker(isCoordinated(config_.planning.method));
@@ -219,6 +217,9 @@ RunResult Simulation::run(const std::optional<std::filesystem::path>& out_dir) c
   RunResult result;
   int64_t issued = 0;
   int64_t violation_count = 0;
+  RunSummary faulted;            // Stage 6 counts the loop sees
+  std::vector<RobotId> removed;  // taken off the floor in the last step: the coordinator hears next
+
   bool aborted = false;
   Timestep steps_run = 0;
   for (Timestep t = 0; t < config_.run.horizon_steps; ++t) {
@@ -228,23 +229,41 @@ RunResult Simulation::run(const std::optional<std::filesystem::path>& out_dir) c
     issued += static_cast<int64_t>(input.new_orders.size());
     stats.recordOrders(input.new_orders);
     // Closures reach the robots and, as observations, the coordinator. Both close a closure's
-    // cells together once no robot stands on any of them.
+    // cells together once no robot stands on any of them. Deaths and outages happen to the
+    // robots only: the coordinator finds out from the reports that stop (Stage 6).
     for (const FaultEvent& e : faults.due(t)) {
-      CellObservation seen{t, {}, {}};
-      if (e.type == FaultType::kBlockCells) {
-        robots.block(e.cells);
-        seen.blocked = e.cells;
-      } else if (e.type == FaultType::kUnblockCells) {
-        robots.unblock(e.cells);
-        seen.cleared = e.cells;
+      switch (e.type) {
+        case FaultType::kBlockCells:
+          robots.block(e.cells);
+          input.observations.push_back(CellObservation{t, e.cells, {}});
+          break;
+        case FaultType::kUnblockCells:
+          robots.unblock(e.cells);
+          input.observations.push_back(CellObservation{t, {}, e.cells});
+          break;
+        case FaultType::kRobotDeath:
+          if (robots.robots()[static_cast<size_t>(e.robot)].alive) ++faulted.robots_died;
+          robots.kill(e.robot, t);
+          break;
+        case FaultType::kCommOutage:
+          robots.outage(e.robot, t, e.duration);
+          break;
       }
-      input.observations.push_back(std::move(seen));
     }
     input.reports = robots.collectReports(t);
+    input.removed = removed;
 
     const TickOutput output = fleet.tick(input);
+    for (const RobotId id : output.declared_dead) {
+      if (robots.robots()[static_cast<size_t>(id)].alive) ++faulted.false_deaths;
+    }
+    faulted.declared_dead += static_cast<int32_t>(output.declared_dead.size());
+    faulted.reconciled += static_cast<int32_t>(output.reconciled.size());
+    faulted.requeued += static_cast<int64_t>(output.requeued.size());
     robots.dispatch(t, output.commands);
     robots.step(t);
+    removed = robots.lastStep().removed;
+    faulted.rescued += static_cast<int32_t>(removed.size());
     assignments.record(output, robots.lastStep());
 
     const TruthSnapshot truth = robots.snapshot();
@@ -273,6 +292,14 @@ RunResult Simulation::run(const std::optional<std::filesystem::path>& out_dir) c
   const double wall =
       std::chrono::duration<double>(std::chrono::steady_clock::now() - wall_start).count();
   result.summary = stats.summarize(config_, steps_run, wall, violation_count, aborted);
+  result.summary.reports_lost = robots.reportsLost();
+  result.summary.commands_lost = robots.commandsLost();
+  result.summary.robots_died = faulted.robots_died;
+  result.summary.declared_dead = faulted.declared_dead;
+  result.summary.false_deaths = faulted.false_deaths;
+  result.summary.reconciled = faulted.reconciled;
+  result.summary.rescued = faulted.rescued;
+  result.summary.requeued = faulted.requeued;
   const ProgressSummary p = progress.summarize(steps_run);
   result.summary.first_deadlock_step = p.first_deadlock_step;
   result.summary.deadlocks = p.deadlocks;

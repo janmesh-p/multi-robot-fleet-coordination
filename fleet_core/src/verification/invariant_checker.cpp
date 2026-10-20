@@ -60,9 +60,12 @@ std::vector<Violation> InvariantChecker::check(const GridMap& map, const StepTru
   };
   const size_t n = after.cells.size();
 
-  // Physical state after the step. Dead robots still occupy their cells.
+  // Physical state after the step. Dead robots still occupy their cells until they are taken
+  // off the floor (Stage 6).
+  const auto onFloor = [&](size_t i) { return i >= after.on_floor.size() || after.on_floor[i]; };
   std::map<Cell, size_t> occupant;
   for (size_t i = 0; i < n; ++i) {
+    if (!onFloor(i)) continue;
     const Cell& c = after.cells[i];
     if (!map.isFree(c)) report(ViolationKind::kOffFreeCell, robotText(i) + " on " + cellText(c));
     const auto [it, inserted] = occupant.emplace(c, i);
@@ -120,19 +123,22 @@ std::vector<Violation> InvariantChecker::check(const GridMap& map, const StepTru
     }
   }
 
-  // Tasks: ground truth.
+  // Tasks: ground truth. An order taken back from a robot that was only out of touch can be held
+  // twice, and delivered twice, until that robot hears from the coordinator again (Stage 6). That
+  // is duplicate work the metrics count, not a coordinator error.
+  const auto requeued = [&](TaskId id) { return tasks.contains(id) && tasks.get(id).requeues > 0; };
   std::map<TaskId, size_t> holder;
   for (size_t i = 0; i < n; ++i) {
     if (!after.holding[i]) continue;
     const auto [it, inserted] = holder.emplace(*after.holding[i], i);
-    if (!inserted) {
+    if (!inserted && !requeued(*after.holding[i])) {
       report(ViolationKind::kTaskHeldTwice, "task " + std::to_string(*after.holding[i]) +
                                                 " held by " + robotText(it->second) + " and " +
                                                 robotText(i));
     }
   }
   for (const Assignment& d : step.deliveries) {
-    if (!delivered_.insert(d.task).second) {
+    if (!delivered_.insert(d.task).second && !requeued(d.task)) {
       report(ViolationKind::kTaskDeliveredTwice, "task " + std::to_string(d.task) + " again by " +
                                                      robotText(static_cast<size_t>(d.robot)));
     }

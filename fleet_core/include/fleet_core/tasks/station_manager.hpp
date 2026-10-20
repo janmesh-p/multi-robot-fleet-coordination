@@ -41,6 +41,9 @@ class StationManager {
   Cell goalFor(RobotId robot, const Cell& station, const Cell& fallback) const;
 
   bool hasTurn(RobotId robot, const Cell& station) const;
+  // Closed cells (closures, and dead robots in Stage 6) are never offered for waiting. A robot
+  // whose waiting cell closes gets another one, or waits at its fallback.
+  void refresh(const GridMap& map);
   const std::vector<Cell>& waitingCells(const Cell& station) const;  // throws std::out_of_range
 
  private:
@@ -52,6 +55,7 @@ class StationManager {
   std::map<Cell, std::deque<RobotId>> queues_{};    // station -> robots; front has the turn
   std::map<RobotId, Cell> waiting_{};               // robot -> its waiting cell
   std::set<Cell> taken_{};                          // waiting cells in use
+  std::set<Cell> closed_{};                         // waiting cells that are closed now
 };
 
 }  // namespace fleet_core

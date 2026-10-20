@@ -2,6 +2,7 @@ include(GoogleTest)
 
 add_executable(fleet_core_tests
   test_config.cpp
+  test_faults.cpp
   test_rng.cpp
   test_grid_map.cpp
   test_map_generator.cpp

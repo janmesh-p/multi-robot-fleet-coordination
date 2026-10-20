@@ -70,6 +70,8 @@ const ProgressStep& ProgressMonitor::observe(const StepTruth& step, const TruthS
       case MotionOutcome::kInvalidStep:
       case MotionOutcome::kYield:
       case MotionOutcome::kNoPermit:
+      case MotionOutcome::kNoCommand:
+      case MotionOutcome::kSafeStop:
         ++no_progress_[i];
         break;
     }

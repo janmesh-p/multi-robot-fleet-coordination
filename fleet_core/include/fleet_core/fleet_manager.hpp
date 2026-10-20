@@ -1,8 +1,10 @@
 #pragma once
 
 #include <cstdint>
+#include <map>
 #include <memory>
 #include <optional>
+#include <set>
 #include <string>
 #include <vector>
 
@@ -27,6 +29,7 @@ struct TickInput {
   std::vector<RobotReport> reports{};           // may be partial under packet loss (Stage 6)
   std::vector<Task> new_orders{};               // from the order source
   std::vector<CellObservation> observations{};  // blocked or reopened cells
+  std::vector<RobotId> removed{};               // dead robots an operator took away (Stage 6)
 };
 
 // One assignment made in a tick, with what the coordinator saw when it made it: the features of
@@ -43,7 +46,11 @@ struct AssignmentRecord {
 struct TickOutput {
   std::vector<RobotCommand> commands{};  // one per robot believed alive, every tick
   std::vector<AssignmentRecord> assignments{};
-  std::vector<TaskId> requeued{};  // orders taken back from robots declared dead (Stage 6)
+  // Stage 6. Orders taken back from a robot: one declared dead, or one whose order a robot that
+  // was out of touch turned out to hold or have delivered.
+  std::vector<TaskId> requeued{};
+  std::vector<RobotId> declared_dead{};  // leases that ran out this tick
+  std::vector<RobotId> reconciled{};     // robots declared dead that reported again
   TickStats stats{};
 };
 
@@ -62,7 +69,11 @@ std::optional<std::string> planningRequirementGap(const Config& config);
 //   1. world       accept reports and cell observations. A closure takes effect once no robot
 //                  stands on any of its cells, as on the floor. A closed or reopened cell
 //                  rebuilds the distance table and triggers replanning (see onCellsChanged).
-//   2. faults      expire heartbeat leases (recovery lands in Stage 6)
+//   2. faults      robots declared dead that report again rejoin; robots taken off the floor
+//                  free their cells; robots whose heartbeat lease ran out are declared dead.
+//                  A robot declared dead may only be out of touch, so the cells it may stand on
+//                  stay closed until it is taken away or heard from, and its order goes back to
+//                  the queue (Stage 6)
 //   3. tasks       add new orders; confirm pickups and deliveries from reports
 //   4. allocation  assign pending tasks to robots without one
 //   5. goals       station (on its turn), station waiting cell, or home parking
@@ -107,6 +118,13 @@ class FleetManager {
   };
 
   bool onClosedCells(const std::vector<Cell>& cells) const;
+  bool declareDead(RobotId robot, Timestep now, TickOutput& output);
+  bool remove(RobotId robot, Timestep now, TickOutput& output);
+  bool reconcile(const RobotReport& report, Timestep now, TickOutput& output);
+  bool clearWreck(RobotId robot, Timestep now);
+  void releaseStations(RobotId robot, const Task& task);
+  void takeBack(TaskId task, Timestep now, TickOutput& output);
+  void extendReach(const RobotCommand& command);
   void onCellsChanged(Timestep now);
   void confirmProgress(Timestep now);
   void allocate(Timestep now, TickOutput& output);
@@ -138,6 +156,11 @@ class FleetManager {
   std::vector<RobotPlan> plans_;  // index == RobotId
   Timestep next_replan_{0};       // rolling horizon: first step of the next replanning
   std::vector<std::vector<Cell>> pending_closures_{};  // waiting for their cells to empty
+  // Stage 6.
+  std::set<Cell> closed_{};                 // cells closures keep closed
+  std::vector<std::vector<Cell>> reach_{};  // per robot: cells it may stand on until it reports
+  std::map<RobotId, std::vector<Cell>> wrecks_{};         // declared dead: cells kept closed for it
+  std::map<RobotId, std::vector<Cell>> held_stations_{};  // stations its wreck may block
 };
 
 }  // namespace fleet_core

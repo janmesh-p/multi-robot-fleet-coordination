@@ -90,15 +90,41 @@ int32_t TrafficManager::progress(const WorldModel& world, RobotId robot) const {
 }
 
 TrafficDecision TrafficManager::decide(const WorldModel& world,
-                                       const std::vector<int32_t>& priority) const {
+                                       const std::vector<int32_t>& priority,
+                                       const std::vector<std::vector<Cell>>& reach) const {
   const GridMap& map = world.map();
   const auto n = static_cast<size_t>(world.fleetSize());
   const bool rules = rules_.dependency_graph || rules_.reservations;
   TrafficDecision out;
   out.permits.assign(n, Permit{});
 
-  std::map<Cell, RobotId> occupant;  // believed positions; dead robots still occupy their cells
-  for (const RobotBelief& b : world.robots()) occupant[b.cell] = b.id;
+  // Believed positions. Dead robots still occupy their cells until they are taken away. A robot
+  // heard this step is where it says; a robot whose report was lost is where it was last seen,
+  // unless a robot heard this step stands there now (Stage 6).
+  const auto heard = [&](RobotId r) { return world.robot(r).last_heard == world.now(); };
+  std::map<Cell, RobotId> occupant;
+  for (const RobotBelief& b : world.robots()) {
+    if (!b.removed && heard(b.id)) occupant[b.cell] = b.id;
+  }
+  for (const RobotBelief& b : world.robots()) {
+    if (!b.removed && !heard(b.id)) occupant.emplace(b.cell, b.id);
+  }
+
+  // Cells a robot whose report was lost may have moved into (Stage 6).
+  std::map<Cell, RobotId> claimed;
+  for (size_t r = 0; r < reach.size() && r < n; ++r) {
+    const RobotBelief& b = world.robot(static_cast<RobotId>(r));
+    if (b.status == RobotStatus::kDead) continue;
+    for (const Cell& c : reach[r]) {
+      const auto o = occupant.find(c);
+      const bool taken = o != occupant.end() && o->second != b.id && heard(o->second);
+      if (c != b.cell && !taken) claimed.emplace(c, static_cast<RobotId>(r));
+    }
+  }
+  const auto claimant = [&](const Cell& c, RobotId self) {
+    const auto it = claimed.find(c);
+    return it != claimed.end() && it->second != self ? it->second : RobotId{-1};
+  };
 
   const auto planOf = [&](RobotId r) -> const CommittedPlan* {
     const auto it = plans_.find(r);
@@ -139,10 +165,20 @@ TrafficDecision TrafficManager::decide(const WorldModel& world,
       step.held = true;
       continue;
     }
+    if (rules && claimant(step.to, r) >= 0) {  // a silent robot may stand there
+      step.held = true;
+      step.waits_for = claimant(step.to, r);
+      continue;
+    }
     if (rules_.dependency_graph) {
       const Dependency& dep = graph_.at(r)[static_cast<size_t>(k + 1)];
       if (dep.robot >= 0 && dep.robot != r) {
         const int32_t p = progress(world, dep.robot);
+        if (p == dep.leave - 1 && !heard(dep.robot)) {
+          step.held = true;  // it may leave in this step, but nobody knows where it is (Stage 6)
+          step.waits_for = dep.robot;
+          continue;
+        }
         if (p == dep.leave - 1) {
           step.after_adg = dep.robot;  // it leaves in this step, at best
         } else if (p < dep.leave) {
@@ -154,7 +190,14 @@ TrafficDecision TrafficManager::decide(const WorldModel& world,
     }
     if (rules_.reservations) {
       const auto o = occupant.find(step.to);
-      if (o != occupant.end() && o->second != r) step.after_res = o->second;
+      if (o != occupant.end() && o->second != r) {
+        if (!heard(o->second)) {  // a move behind a robot whose report was lost waits (Stage 6)
+          step.held = true;
+          step.waits_for = o->second;
+          continue;
+        }
+        step.after_res = o->second;
+      }
     }
   }
 
@@ -244,7 +287,7 @@ TrafficDecision TrafficManager::decide(const WorldModel& world,
     const std::vector<Cell>& path = planOf(r)->path.cells;
     for (auto b = static_cast<size_t>(permit.until) + 1; b < path.size(); ++b) {
       if (path[b] != path[b - 1]) {
-        if (map.isBlocked(path[b])) break;
+        if (map.isBlocked(path[b]) || claimant(path[b], r) >= 0) break;
         if (rules_.dependency_graph && !departed(r, static_cast<int32_t>(b))) break;
       }
       permit.until = static_cast<int32_t>(b);

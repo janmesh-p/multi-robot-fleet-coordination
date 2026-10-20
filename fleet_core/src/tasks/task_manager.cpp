@@ -88,6 +88,21 @@ void TaskManager::markDone(TaskId id, Timestep now) {
   ++done_count_;
 }
 
+void TaskManager::markDoneBy(TaskId id, RobotId robot, Timestep now) {
+  Task& task = mutableGet(id);
+  if (task.status == TaskStatus::kDone) badTransition("markDoneBy", task, "not done");
+  if (task.status == TaskStatus::kPending) {
+    pending_.erase({task.created_at, id});
+  } else {
+    active_.erase(*task.robot);
+  }
+  task.robot = robot;
+  task.status = TaskStatus::kDone;
+  if (!task.picked_at) task.picked_at = now;
+  task.done_at = now;
+  ++done_count_;
+}
+
 void TaskManager::requeue(TaskId id, Timestep /*now*/) {
   Task& task = mutableGet(id);
   if (task.status != TaskStatus::kAssigned && task.status != TaskStatus::kPickedUp) {
@@ -98,6 +113,7 @@ void TaskManager::requeue(TaskId id, Timestep /*now*/) {
   task.robot.reset();
   task.assigned_at.reset();
   task.picked_at.reset();
+  ++task.requeues;
   pending_.insert({task.created_at, id});  // keeps its age, so it is first in line again
 }
 

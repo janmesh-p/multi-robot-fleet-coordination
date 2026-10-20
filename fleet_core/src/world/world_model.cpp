@@ -40,6 +40,7 @@ bool WorldModel::applyReport(const RobotReport& report) {
   b.last_completed = report.last_completed;
   b.plan_id = report.plan_id;
   b.path_index = report.path_index;
+  b.carrying = report.carrying;
   b.last_heard = now_;
   b.last_seq = report.seq;
   return true;
@@ -51,5 +52,18 @@ void WorldModel::applyObservation(const CellObservation& observation) {
 }
 
 void WorldModel::markDead(RobotId id) { mutableRobot(id).status = RobotStatus::kDead; }
+
+void WorldModel::markRemoved(RobotId id) {
+  RobotBelief& b = mutableRobot(id);
+  b.status = RobotStatus::kDead;
+  b.removed = true;
+}
+
+void WorldModel::revive(const RobotReport& report) {
+  RobotBelief& b = mutableRobot(report.robot);
+  if (b.removed || b.status != RobotStatus::kDead) return;
+  b.status = report.status;  // anything but dead, so the report applies
+  applyReport(report);
+}
 
 }  // namespace fleet_core

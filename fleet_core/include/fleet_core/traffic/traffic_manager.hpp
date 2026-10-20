@@ -78,7 +78,11 @@ class TrafficManager {
   // Permits for the whole fleet (index == RobotId; robots without a plan get until -1).
   // priority: per robot, the higher value wins a contested cell (the age of its order, -1 without
   // one); ties go to the lower id.
-  TrafficDecision decide(const WorldModel& world, const std::vector<int32_t>& priority) const;
+  // reach (Stage 6): per robot, every cell it may stand on since its last report. A robot whose
+  // report was lost may have moved on, so with the traffic rules no other robot gets a permit
+  // into any of those cells. With every report heard, reach is just the reported cell.
+  TrafficDecision decide(const WorldModel& world, const std::vector<int32_t>& priority,
+                         const std::vector<std::vector<Cell>>& reach = {}) const;
 
   const TrafficRules& rules() const { return rules_; }
 

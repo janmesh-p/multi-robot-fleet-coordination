@@ -63,16 +63,29 @@ void RunStats::recordStep(const StepTruth& step, const TruthSnapshot& after,
     mix(d.task);
   }
 
-  delivered_total_ += static_cast<int64_t>(step.deliveries.size());
-  for (const Assignment& d : step.deliveries) open_.erase(d.task);
+  // An order a robot that was out of touch delivered too counts once (Stage 6).
+  std::vector<Assignment> first;
+  for (const Assignment& d : step.deliveries) {
+    if (delivered_.insert(d.task).second) {
+      first.push_back(d);
+    } else {
+      ++duplicate_deliveries_;
+    }
+  }
+  delivered_total_ += static_cast<int64_t>(first.size());
+  for (const Assignment& d : first) open_.erase(d.task);
+  for (const MotionRecord& m : step.motion) {
+    if (m.outcome == MotionOutcome::kNoCommand) ++no_command_steps_;
+    if (m.outcome == MotionOutcome::kSafeStop) ++safe_stop_steps_;
+  }
   expansions_ += tick.expansions;
   if (tick.planner_called) planning_ms_.push_back(tick.planning_ms);
   if (tick.planner_failed) ++planner_failures_;
   deadlocks_resolved_ += tick.deadlocks_resolved;
   if (step.t < warmup_) return;
 
-  delivered_steady_ += static_cast<int64_t>(step.deliveries.size());
-  for (const Assignment& d : step.deliveries) {
+  delivered_steady_ += static_cast<int64_t>(first.size());
+  for (const Assignment& d : first) {
     const auto it = created_at_.find(d.task);
     if (it != created_at_.end() && it->second >= warmup_) {
       completion_steps_.push_back(static_cast<double>(step.t - it->second));
@@ -123,6 +136,9 @@ RunSummary RunStats::summarize(const Config& config, Timestep steps_run, double 
   s.yields = yields_;
   s.traffic_holds = traffic_holds_;
   s.deadlocks_resolved = deadlocks_resolved_;
+  s.duplicate_deliveries = duplicate_deliveries_;
+  s.no_command_steps = no_command_steps_;
+  s.safe_stop_steps = safe_stop_steps_;
   if (!completion_steps_.empty()) {
     s.max_completion_steps = *std::max_element(completion_steps_.begin(), completion_steps_.end());
   }

@@ -2,10 +2,11 @@
 //
 //   bench_planning --config <file.yaml> [--planners pibt,windowed_coop_astar,prioritized,ecbs]
 //                  [--fleet 5,10,25] [--seeds 1-5] [--rate R] [--map <map.txt>]
-//                  [--delay P] [--disable feature,...] [--record] [--out <file.csv>]
+//                  [--delay P] [--loss P] [--disable feature,...] [--record] [--out <file.csv>]
 //
 // Each run is the config with planning.method, fleet.size, and run.seed replaced (and
-// orders.arrival_rate, map.file, execution.delay_probability, and feature toggles, when given),
+// orders.arrival_rate, map.file, execution.delay_probability, faults.packet_loss, and feature
+// toggles, when given),
 // so per-seed differences between planners are paired. Writes one CSV row per run and prints one
 // line per planner and fleet size. Exit codes: 0 done, 1 error, 2 bad arguments, 5 a coordinated
 // planner had a violation or an aborted run (not checked with --record, for ablations that
@@ -35,13 +36,14 @@ namespace {
 int usage(std::ostream& out, int code) {
   out << "usage: bench_planning --config <file.yaml> [--planners a,b,...] [--fleet 5,10,25]\n"
          "                      [--seeds 1-5] [--rate R] [--map <map.txt>] [--delay P]\n"
-         "                      [--disable feature,...] [--record] [--out <file.csv>]\n"
+         "                      [--loss P] [--disable feature,...] [--record] [--out <file.csv>]\n"
          "  --planners  planning methods (default pibt,windowed_coop_astar,prioritized,ecbs)\n"
          "  --fleet     fleet sizes (default 5,10,25)\n"
          "  --seeds     seeds, a list or a range (default 1-5)\n"
          "  --rate      orders per step instead of the config's\n"
          "  --map       map file instead of the config's\n"
          "  --delay     execution.delay_probability instead of the config's\n"
+         "  --loss      faults.packet_loss instead of the config's\n"
          "  --disable   turn these features off, for example dependency_graph\n"
          "  --record    keep running after a violation (verification.on_violation: record)\n";
   return code;
@@ -105,7 +107,7 @@ double mean(const std::vector<double>& v) {
   return v.empty() ? 0.0 : sum / static_cast<double>(v.size());
 }
 
-std::string csvRow(const RunSummary& s, double delay, const std::string& disabled) {
+std::string csvRow(const RunSummary& s, double delay, double loss, const std::string& disabled) {
   char hash[17];
   std::snprintf(hash, sizeof(hash), "%016llx", static_cast<unsigned long long>(s.log_hash));
   std::ostringstream out;
@@ -118,14 +120,17 @@ std::string csvRow(const RunSummary& s, double delay, const std::string& disable
       << s.deadlocks << ',' << s.stalled_robots << ',' << s.frozen_at << ',' << hash << ','
       << s.wall_seconds << ',' << delay << ',' << disabled << ',' << s.steps_run << ','
       << s.delayed_steps << ',' << s.yields << ',' << s.traffic_holds << ',' << s.deadlocks_resolved
-      << ',' << s.max_completion_steps << ',' << s.oldest_open_steps;
+      << ',' << s.max_completion_steps << ',' << s.oldest_open_steps << ',' << loss << ','
+      << s.reports_lost << ',' << s.commands_lost << ',' << s.robots_died << ',' << s.declared_dead
+      << ',' << s.false_deaths << ',' << s.reconciled << ',' << s.rescued << ',' << s.requeued
+      << ',' << s.duplicate_deliveries << ',' << s.no_command_steps << ',' << s.safe_stop_steps;
   return out.str();
 }
 
 }  // namespace
 
 int main(int argc, char** argv) {
-  std::string config_path, out_path, map_path, rate_arg, delay_arg, disable_arg;
+  std::string config_path, out_path, map_path, rate_arg, delay_arg, loss_arg, disable_arg;
   std::string planners_arg = "pibt,windowed_coop_astar,prioritized,ecbs";
   std::string fleet_arg = "5,10,25", seeds_arg = "1-5";
   bool record = false;
@@ -145,6 +150,8 @@ int main(int argc, char** argv) {
       map_path = argv[++i];
     } else if (arg == "--delay" && i + 1 < argc) {
       delay_arg = argv[++i];
+    } else if (arg == "--loss" && i + 1 < argc) {
+      loss_arg = argv[++i];
     } else if (arg == "--disable" && i + 1 < argc) {
       disable_arg = argv[++i];
     } else if (arg == "--record") {
@@ -163,6 +170,7 @@ int main(int argc, char** argv) {
   std::vector<int32_t> fleet_sizes;
   std::vector<uint64_t> seeds;
   std::optional<double> rate, delay;
+  std::optional<double> loss;
   const std::vector<std::string> disabled = splitList(disable_arg);
   try {
     methods = parseMethods(planners_arg);
@@ -174,6 +182,7 @@ int main(int argc, char** argv) {
     };
     if (!rate_arg.empty()) rate = number(rate_arg, "rate");
     if (!delay_arg.empty()) delay = number(delay_arg, "delay");
+    if (!loss_arg.empty()) loss = number(loss_arg, "loss");
     FeatureToggles check;
     for (const std::string& name : disabled) disable(check, name);
     for (const int64_t v : parseIntList(fleet_arg)) {
@@ -197,6 +206,7 @@ int main(int argc, char** argv) {
       base.map.generator.reset();
     }
     if (delay) base.execution.delay_probability = *delay;
+    if (loss) base.faults.packet_loss = *loss;
     for (const std::string& name : disabled) disable(base.features, name);
     if (record) base.verification.on_violation = ViolationMode::kRecord;
     validateConfig(base);
@@ -212,12 +222,20 @@ int main(int argc, char** argv) {
            "expansions,planning_p50_ms,planning_p95_ms,violations,aborted,deadlocks,"
            "stalled_robots,frozen_at,log_hash,wall_seconds,delay_probability,disabled,steps_run,"
            "delayed_steps,yields,traffic_holds,deadlocks_resolved,max_completion_steps,"
-           "oldest_open_steps\n";
+           "oldest_open_steps,packet_loss,reports_lost,commands_lost,robots_died,declared_dead,"
+           "false_deaths,reconciled,rescued,requeued,duplicate_deliveries,no_command_steps,"
+           "safe_stop_steps\n";
     std::cout << "bench      " << base.run.name << " on " << map_name << ": "
               << toString(base.allocation.method) << " allocation, " << base.orders.arrival_rate
               << " orders per step, " << base.run.horizon_steps << " steps, window "
               << base.planning.window << ", replan every " << base.planning.replan_period
               << " steps, " << seeds.size() << (seeds.size() == 1 ? " seed" : " seeds") << "\n";
+    if (base.faults.packet_loss > 0.0 || !base.faults.events.empty()) {
+      std::cout << "faults     packet loss " << base.faults.packet_loss << ", "
+                << base.faults.events.size() << " scripted events, lease "
+                << base.faults.heartbeat_timeout_steps << " steps, rescue after "
+                << base.faults.rescue_steps << " steps\n";
+    }
     if (base.execution.delay_probability > 0.0 || !disabled.empty() || record) {
       std::cout << "execution  delay " << base.execution.delay_probability
                 << ", features off: " << (disabled.empty() ? "none" : disabled_text)
@@ -241,7 +259,8 @@ int main(int argc, char** argv) {
           c.run.name = base.run.name + "_" + std::string(toString(method)) + "_n" +
                        std::to_string(size) + "_s" + std::to_string(seed);
           const RunSummary s = Simulation(c).run().summary;
-          csv << csvRow(s, c.execution.delay_probability, disabled_text) << "\n";
+          csv << csvRow(s, c.execution.delay_probability, c.faults.packet_loss, disabled_text)
+              << "\n";
           stops += s.conflicts;
           oph.push_back(s.orders_per_hour);
           completion.push_back(s.mean_completion_steps);

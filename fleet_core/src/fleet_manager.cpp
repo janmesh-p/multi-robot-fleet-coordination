@@ -73,6 +73,7 @@ FleetManager::FleetManager(const Config& config, WorldModel world,
     throw std::invalid_argument("FleetManager: " + *gap);
   }
   if (config_.features.parking) parking_.emplace(world_.map(), world_.fleetSize());
+  for (const RobotBelief& b : world_.robots()) reach_.push_back({b.cell});
 }
 
 FleetManager::~FleetManager() = default;
@@ -87,11 +88,32 @@ Cell FleetManager::goalOf(RobotId robot) const {
 TickOutput FleetManager::tick(const TickInput& input) {
   TickOutput output;
   world_.setNow(input.now);
-  for (const RobotReport& report : input.reports) world_.applyReport(report);
+  std::vector<const RobotReport*> revived;
+  for (const RobotReport& report : input.reports) {
+    const RobotBelief& b = world_.robot(report.robot);
+    if (b.status == RobotStatus::kDead) {
+      if (!b.removed && report.seq > b.last_seq) revived.push_back(&report);
+      continue;
+    }
+    if (world_.applyReport(report)) reach_[static_cast<size_t>(report.robot)] = {report.cell};
+  }
   bool cells_changed = false;
+  for (const RobotId id : input.removed)
+    cells_changed = remove(id, input.now, output) || cells_changed;
+  for (const RobotReport* report : revived) {
+    cells_changed = reconcile(*report, input.now, output) || cells_changed;
+  }
   for (const CellObservation& observation : input.observations) {
     if (!observation.cleared.empty()) {
-      world_.applyObservation(CellObservation{observation.stamp, {}, observation.cleared});
+      std::vector<Cell> opening;  // a dead robot's cells stay closed
+      for (const Cell& c : observation.cleared) {
+        closed_.erase(c);
+        const bool wreck = std::any_of(wrecks_.begin(), wrecks_.end(), [&](const auto& w) {
+          return std::find(w.second.begin(), w.second.end(), c) != w.second.end();
+        });
+        if (!wreck) opening.push_back(c);
+      }
+      world_.applyObservation(CellObservation{observation.stamp, {}, opening});
       for (std::vector<Cell>& closure : pending_closures_) {
         closure.erase(std::remove_if(closure.begin(), closure.end(),
                                      [&](const Cell& c) {
@@ -114,34 +136,171 @@ TickOutput FleetManager::tick(const TickInput& input) {
     }
     if (!it->empty()) {
       world_.applyObservation(CellObservation{input.now, *it, {}});
+      closed_.insert(it->begin(), it->end());
       cells_changed = true;
     }
     it = pending_closures_.erase(it);
   }
+  for (const RobotId id : faults_.expired(input.now, world_)) {
+    cells_changed = declareDead(id, input.now, output) || cells_changed;
+  }
   if (cells_changed) onCellsChanged(input.now);
-
-  const FaultActions faults = faults_.update(input.now, world_, tasks_);
-  output.stats.robots_declared_dead = static_cast<int32_t>(faults.declared_dead.size());
-  output.stats.tasks_requeued = static_cast<int32_t>(faults.requeued.size());
-  output.requeued = faults.requeued;
 
   for (const Task& task : input.new_orders) tasks_.add(task);
   confirmProgress(input.now);
   allocate(input.now, output);
   plan(input.now, computeGoals(), output.stats);
-  const TrafficDecision traffic = traffic_.decide(world_, priorities(input.now));
+  const TrafficDecision traffic = traffic_.decide(world_, priorities(input.now), reach_);
   if (config_.features.deadlock_recovery && isCoordinated(config_.planning.method) &&
       !traffic.cycles.empty()) {
     recover(input.now, traffic.cycles, output.stats);
   }
   output.commands = commands(input.now, traffic);
+  for (const RobotCommand& command : output.commands) extendReach(command);
   return output;
 }
 
 bool FleetManager::onClosedCells(const std::vector<Cell>& cells) const {
   return std::any_of(world_.robots().begin(), world_.robots().end(), [&](const RobotBelief& b) {
-    return std::find(cells.begin(), cells.end(), b.cell) != cells.end();
+    return !b.removed && std::find(cells.begin(), cells.end(), b.cell) != cells.end();
   });
+}
+
+// A robot whose lease ran out may be dead or only out of touch. The cells it may stand on close
+// until it is taken away or heard from again, and its order goes back to the queue. A station its
+// wreck may block stays its turn until then, so no other robot is sent onto it.
+bool FleetManager::declareDead(RobotId robot, Timestep now, TickOutput& output) {
+  world_.markDead(robot);
+  output.declared_dead.push_back(robot);
+  ++output.stats.robots_declared_dead;
+  // A cell another robot reported from this tick is free of it. Any other cell it may reach stays
+  // closed, even one a silent robot was last seen on: that one may have moved on.
+  std::vector<Cell> wreck;
+  for (const Cell& c : reach_[static_cast<size_t>(robot)]) {
+    const bool other =
+        std::any_of(world_.robots().begin(), world_.robots().end(), [&](const RobotBelief& b) {
+          return b.id != robot && b.status != RobotStatus::kDead && b.last_heard == now &&
+                 b.cell == c;
+        });
+    if (!other) wreck.push_back(c);
+  }
+  if (const auto task_id = tasks_.taskOf(robot)) {
+    const Task& task = tasks_.get(*task_id);
+    for (const Cell& station : {task.order.pickup, task.order.dropoff}) {
+      if (std::find(wreck.begin(), wreck.end(), station) != wreck.end()) {
+        held_stations_[robot].push_back(station);
+      } else {
+        stations_.release(robot, station);
+      }
+    }
+    takeBack(*task_id, now, output);
+  }
+  traffic_.release(robot);
+  plans_[static_cast<size_t>(robot)].valid = false;
+  std::vector<Cell> closing;
+  for (const Cell& c : wreck) {
+    if (!world_.map().isBlocked(c)) closing.push_back(c);
+  }
+  wrecks_[robot] = std::move(wreck);
+  if (closing.empty()) return false;
+  world_.applyObservation(CellObservation{now, closing, {}});
+  return true;
+}
+
+// An operator took a dead robot off the floor: its cells open again.
+bool FleetManager::remove(RobotId robot, Timestep now, TickOutput& output) {
+  if (world_.robot(robot).removed) return false;
+  bool changed = false;
+  if (world_.robot(robot).status != RobotStatus::kDead) changed = declareDead(robot, now, output);
+  world_.markRemoved(robot);
+  return clearWreck(robot, now) || changed;
+}
+
+// A robot declared dead reports again: it was only out of touch. Its cells open and it rejoins
+// the fleet. A delivery it made meanwhile counts. It keeps the order it carries unless another
+// robot has picked that order up. Any other order it holds goes, and its next command says so.
+bool FleetManager::reconcile(const RobotReport& report, Timestep now, TickOutput& output) {
+  const RobotId robot = report.robot;
+  const bool changed = clearWreck(robot, now);
+  world_.revive(report);
+  reach_[static_cast<size_t>(robot)] = {report.cell};
+  output.reconciled.push_back(robot);
+  if (report.last_completed && tasks_.contains(*report.last_completed)) {
+    const Task& done = tasks_.get(*report.last_completed);
+    if (done.status != TaskStatus::kDone) {
+      if (done.robot) {
+        releaseStations(*done.robot, done);
+        output.requeued.push_back(done.order.id);
+        ++output.stats.tasks_requeued;
+      }
+      tasks_.markDoneBy(done.order.id, robot, now);
+    }
+  }
+  if (report.task && report.carrying && tasks_.contains(*report.task)) {
+    const Task& held = tasks_.get(*report.task);
+    const TaskId id = held.order.id;
+    const bool elsewhere = held.status == TaskStatus::kAssigned && held.robot != robot;
+    if (held.status == TaskStatus::kPending || elsewhere) {
+      if (elsewhere) {
+        releaseStations(*held.robot, held);
+        takeBack(id, now, output);
+      }
+      tasks_.assign(id, robot, now);
+      tasks_.markPickedUp(id, now);
+    }
+  }
+  plans_[static_cast<size_t>(robot)].valid = false;
+  if (isCoordinated(config_.planning.method) && config_.features.rolling_replanning) {
+    next_replan_ = std::min(next_replan_, now);
+  }
+  return changed;
+}
+
+// Opens the cells kept closed for a robot declared dead, except cells a closure or another dead
+// robot still keeps closed, and gives up the station turns its wreck held.
+bool FleetManager::clearWreck(RobotId robot, Timestep now) {
+  const auto it = wrecks_.find(robot);
+  if (it == wrecks_.end()) return false;
+  const std::vector<Cell> cells = std::move(it->second);
+  wrecks_.erase(it);
+  for (const Cell& station : held_stations_[robot]) stations_.release(robot, station);
+  held_stations_.erase(robot);
+  std::vector<Cell> opening;
+  for (const Cell& c : cells) {
+    if (closed_.count(c) != 0 || !world_.map().isBlocked(c)) continue;
+    const bool other = std::any_of(wrecks_.begin(), wrecks_.end(), [&](const auto& w) {
+      return std::find(w.second.begin(), w.second.end(), c) != w.second.end();
+    });
+    if (!other) opening.push_back(c);
+  }
+  if (opening.empty()) return false;
+  world_.applyObservation(CellObservation{now, {}, opening});
+  return true;
+}
+
+void FleetManager::releaseStations(RobotId robot, const Task& task) {
+  stations_.release(robot, task.order.pickup);
+  stations_.release(robot, task.order.dropoff);
+}
+
+void FleetManager::takeBack(TaskId task, Timestep now, TickOutput& output) {
+  tasks_.requeue(task, now);
+  output.requeued.push_back(task);
+  ++output.stats.tasks_requeued;
+}
+
+// Where a robot may stand before its next report: every cell its commands since then let it
+// reach. Any of them may have been the one that arrived.
+void FleetManager::extendReach(const RobotCommand& command) {
+  if (command.path.empty()) return;
+  std::vector<Cell>& reach = reach_[static_cast<size_t>(command.robot)];
+  const RobotBelief& b = world_.robot(command.robot);
+  const int32_t last = static_cast<int32_t>(command.path.size()) - 1;
+  const int32_t to = std::min(std::max(command.permitted_until, 0), last);
+  for (int32_t k = pathProgress(b, command.plan_id, command.path); k <= to; ++k) {
+    const Cell& c = command.path[static_cast<size_t>(k)];
+    if (std::find(reach.begin(), reach.end(), c) == reach.end()) reach.push_back(c);
+  }
 }
 
 // A closed or reopened cell changes distances and can cut planned paths. The distance table is
@@ -150,6 +309,7 @@ bool FleetManager::onClosedCells(const std::vector<Cell>& cells) const {
 // together.
 void FleetManager::onCellsChanged(Timestep now) {
   distances_ = DistanceOracle(world_.map(), config_.features.distance_oracle);
+  stations_.refresh(world_.map());
   if (!isCoordinated(config_.planning.method)) {
     for (const RobotBelief& b : world_.robots()) {
       RobotPlan& p = plans_[static_cast<size_t>(b.id)];
@@ -185,8 +345,7 @@ void FleetManager::confirmProgress(Timestep now) {
         tasks_.markDone(task.order.id, now);
       }
     }
-    const bool carrying = b.status == RobotStatus::kToDropoff || b.status == RobotStatus::kDropping;
-    if (carrying && b.task && tasks_.contains(*b.task)) {
+    if (b.carrying && b.task && tasks_.contains(*b.task)) {
       const Task& task = tasks_.get(*b.task);
       if (task.status == TaskStatus::kAssigned && task.robot == b.id) {
         stations_.release(b.id, task.order.pickup);
@@ -234,6 +393,12 @@ std::vector<Cell> FleetManager::computeGoals() {
       // robots it waits for.
       const bool home = parking_ && isCoordinated(config_.planning.method);
       goal = stations_.goalFor(b.id, station, home ? parking_->home(b.id) : b.cell);
+    }
+    // A goal on a closed cell or cut off by one (a dead robot, Stage 6) waits until it opens.
+    if (b.status != RobotStatus::kDead && goal != b.cell &&
+        (world_.map().isBlocked(goal) ||
+         distances_.distance(b.cell, goal) >= DistanceOracle::kUnreachable)) {
+      goal = b.cell;
     }
   }
   return goals;
@@ -292,6 +457,8 @@ void FleetManager::planRolling(Timestep now, const std::vector<Cell>& goals, Tic
   std::vector<Path> fixed;
   for (const RobotBelief& b : world_.robots()) {
     if (b.status == RobotStatus::kDead) continue;
+    if (b.last_heard != now)
+      continue;  // report lost: keeps its plan, the traffic rules hold others
     if (servicing(b.status)) {
       fixed.push_back(Path{b.id, now, {b.cell}});
       continue;
@@ -321,7 +488,7 @@ void FleetManager::planRolling(Timestep now, const std::vector<Cell>& goals, Tic
 void FleetManager::planToGoals(Timestep now, const std::vector<Cell>& goals, TickStats& stats) {
   std::vector<PlanAgent> agents;
   for (const RobotBelief& b : world_.robots()) {
-    if (b.status == RobotStatus::kDead || servicing(b.status)) continue;
+    if (b.status == RobotStatus::kDead || servicing(b.status) || b.last_heard != now) continue;
     const auto i = static_cast<size_t>(b.id);
     const RobotPlan& current = plans_[i];
     if (current.valid && current.goal == goals[i]) continue;

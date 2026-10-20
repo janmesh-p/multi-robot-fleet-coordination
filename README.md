@@ -4,13 +4,15 @@ Warehouse multi-agent pickup and delivery (MAPD): task allocation, lifelong mult
 finding, traffic management, and fault recovery for up to 100 robots. Grid simulator for scale,
 Isaac Sim for physics, desk hardware in the loop.
 
-**Status:** Stage 5 (execution and traffic) done. Robots that miss up to one step in three ran
-320 simulated hours under four coordinated planners without a safety stop. With the traffic rules
-off, robot safety stopped them 44,170 times at one missed step in ten
-([numbers](#execution-and-traffic-stage-5)). Where independent planning froze every run
-([baseline](#baseline-stage-2)), coordinated planners ran 276 simulated hours with up to 100
-robots without a safety stop or a frozen run ([numbers](#coordinated-planning-stage-4)). Every
-number in this README comes from measured runs.
+**Status:** Stage 6 (faults, fuzz harness) done. With up to three in ten reports and commands
+lost, four coordinated planners ran 320 simulated hours without a safety stop or a frozen run, and
+1,000 random scenarios with deaths, outages, and lost messages passed every check
+([numbers](#faults-stage-6)). Robots that miss up to one step in three ran 320 simulated hours
+without a safety stop. With the traffic rules off, robot safety stopped them 44,170 times at one
+missed step in ten ([numbers](#execution-and-traffic-stage-5)). Where independent planning
+froze every run ([baseline](#baseline-stage-2)), coordinated planners ran 276 simulated hours with
+up to 100 robots without a safety stop or a frozen run ([numbers](#coordinated-planning-stage-4)).
+Every number in this README comes from measured runs.
 
 ## Architecture
 
@@ -44,7 +46,8 @@ number in this README comes from measured runs.
 
 Each step: new orders arrive (Poisson), robots report, the coordinator ticks, robots move one
 cell along their newest command, invariants are checked, and metrics are recorded. 1 step is
-1 simulated second.
+1 simulated second. Reports and commands cross a link that can lose them, and scripted events
+kill robots or cut them off ([Stage 6](#faults-stage-6)).
 
 A progress monitor reads the same ground truth. A robot stopped by robot safety waits for the
 robot standing in the cell it wanted. Each robot wants one cell, so these waits form chains; a
@@ -218,8 +221,8 @@ are homes, which leaves 50 to wait on near its 20 stations; robots that find non
 and drive over when their turn comes. Stage 7 measures where the time goes.
 
 What this does not show: robots that run late and closed aisles
-([Stage 5](#execution-and-traffic-stage-5)), lost messages and dead robots (Stage 6), and the
-learned allocator (the learning track).
+([Stage 5](#execution-and-traffic-stage-5)), lost messages and dead robots
+([Stage 6](#faults-stage-6)), and the learned allocator (the learning track).
 
 ```bash
 ./build/bench_planning --config benchmarks/configs/planning.yaml --fleet 5,10,25 --seeds 1-10
@@ -340,7 +343,7 @@ when the cells around it closed, and `windowed_coop_astar` found no plan for the
 in 2 of 10 runs. A test now covers that run.
 
 What this does not show: slow robots or bursts of delay (each missed step is drawn on its own),
-more than one closure scenario, and lost messages and dead robots (Stage 6).
+more than one closure scenario, and lost messages and dead robots ([Stage 6](#faults-stage-6)).
 
 ```bash
 for p in 0.05 0.1 0.2 0.3; do
@@ -359,6 +362,117 @@ done
 ./build/bench_planning --config benchmarks/configs/closure.yaml --fleet 10,25 --seeds 1-10
 ./build/bench_planning --config benchmarks/configs/closure.yaml --planners prioritized,ecbs \
   --fleet 10,25 --seeds 1-10 --disable rolling_replanning
+```
+
+## Faults (Stage 6)
+
+Robots and the coordinator talk over a radio link, and robots break. Stage 6 loses messages, cuts
+robots off, and kills them. The coordinator learns of all three only from the reports that stop.
+
+- Lost messages (`faults.packet_loss` p): every report and every command is lost with probability
+  p, drawn from its own seeded stream. A `comm_outage` event cuts one robot off both ways.
+- A permit is good for one step: a robot moves only in the step its command arrives. A lost
+  command is then a missed step, which the Stage 5 rules already handle. Robots get a command every
+  step, so runs without faults did not change.
+- Stale reports: a robot heard this step is where it says. A robot whose report was lost may have
+  moved anywhere its permits allowed. With the traffic rules, no other robot gets a permit into
+  those cells, or a permit to follow it, until it is heard again. It keeps its plan rather than
+  being replanned from where it was last seen.
+- Leases (`faults.heartbeat_timeout_steps`, 5): a robot silent for longer is declared dead. Its
+  order goes back to the queue, and the cells it may stand on close until it is taken away or
+  heard from. A station it may be standing on stays its turn, so no other robot is sent there.
+- Safe stop: a robot that hears no command for longer than the same timeout holds where it is
+  and pauses station service.
+- Deaths (`robot_death` events): a dead robot stops for good on its cell. `faults.rescue_steps`
+  (120) later an operator takes it away and tells the coordinator, which reopens its cells.
+- False deaths: a robot declared dead that reports again rejoins the fleet. A delivery it made
+  while out of touch counts. It keeps the order it carries unless another robot has picked that
+  order up. Any other order it holds goes, because commands name the order a robot holds. An order
+  delivered twice is counted, not treated as a violation.
+- Fuzz harness (`fuzz_sim`): random generated warehouses, fleets, planners, allocators, arrival
+  rates, delays, packet loss, lease and rescue times, deaths, outages, and closures. Every case
+  must run without a violation or an exception, and twice to the same log hash. A failing case is
+  shrunk and written out as a config. CI runs 300 cases.
+
+`warehouse_small`, optimal matching, 0.1 orders per step, rolling replanning, one simulated hour
+per run, seeds 1 to 10. Orders per hour in steady state, mean over the seeds, by the chance that
+a message is lost. Column 0 is the Stage 4 table.
+
+| Robots | Planner | 0 | 0.05 | 0.1 | 0.2 | 0.3 |
+|---:|---|---:|---:|---:|---:|---:|
+| 10 | `pibt` | 298.9 | 264.0 | 233.2 | 181.3 | 135.8 |
+| 10 | `windowed_coop_astar` | 346.8 | 317.0 | 280.4 | 223.3 | 173.3 |
+| 10 | `prioritized` | 346.8 | 318.0 | 284.0 | 223.4 | 173.8 |
+| 10 | `ecbs` | 348.2 | 320.5 | 286.8 | 228.5 | 178.7 |
+| 25 | `pibt` | 356.5 | 356.3 | 339.8 | 240.2 | 169.1 |
+| 25 | `windowed_coop_astar` | 359.2 | 358.0 | 356.8 | 353.8 | 276.2 |
+| 25 | `prioritized` | 358.7 | 357.8 | 358.0 | 351.7 | 277.2 |
+| 25 | `ecbs` | 359.5 | 358.4 | 358.8 | 357.6 | 310.1 |
+
+- No safety stop, no violation, and no frozen run in the 320 runs with lost messages.
+- With 10 robots every lost command costs a step: 8% to 12% fewer deliveries at one message in
+  twenty, 49% to 55% fewer at three in ten.
+- With 25 robots there is slack. `windowed_coop_astar`, `prioritized`, and `ecbs` lose at most 2%
+  up to one message in five. `pibt` loses the most: 33% at one in five.
+- A robot is declared dead after six reports in a row are lost: never at one in twenty, 4 times
+  at one in ten, 280 times at one in five, and 2,448 times at three in ten. All but 4 came back
+  before their run ended. No order was delivered twice.
+
+Faults together: `benchmarks/configs/faults.yaml` is the planning scenario with one message in
+ten lost, robot 0 dying at step 600 and robot 3 at step 1800, robot 5 out of touch for 60 steps
+from step 900, and robot 7 for 3 steps from step 2400. Orders per hour, mean over seeds 1 to 10.
+
+| Robots | Planner | Replanning | No faults | Faults |
+|---:|---|---|---:|---:|
+| 10 | `pibt` | rolling | 298.9 | 205.0 |
+| 10 | `windowed_coop_astar` | rolling | 346.8 | 240.2 |
+| 10 | `prioritized` | rolling | 346.8 | 242.3 |
+| 10 | `ecbs` | rolling | 348.2 | 243.7 |
+| 10 | `prioritized` | to goals | 356.0 | 256.6 |
+| 10 | `ecbs` | to goals | 356.4 | 259.6 |
+| 25 | `pibt` | rolling | 356.5 | 325.4 |
+| 25 | `windowed_coop_astar` | rolling | 359.2 | 355.8 |
+| 25 | `prioritized` | rolling | 358.7 | 356.6 |
+| 25 | `ecbs` | rolling | 359.5 | 358.1 |
+| 25 | `prioritized` | to goals | 358.8 | 358.2 |
+| 25 | `ecbs` | to goals | 358.9 | 357.8 |
+
+- No safety stop, no violation, and no frozen run in the 120 runs.
+- Every run declared its two dead robots dead, and robot 5 too, a minute out of touch: a false
+  death. It came back each time. Robot 7 was out of touch for less than the lease. With 25
+  robots, lost messages caused one more false death in one run of ten.
+- 2.3 to 3.4 orders per run went back to the queue. One order was delivered twice, in one `pibt`
+  run with 10 robots.
+- With 10 robots, two robots gone and one message in ten lost cost 27% to 31% of the deliveries.
+  With 25 robots, every planner but `pibt` lost under 1%; `pibt` lost 9%.
+
+Fuzz harness, 1,000 random scenarios: all passed. They held 709 robot deaths, 4,532 false deaths
+(4,366 came back before their run ended), 488 dead robots taken away, 1,108,831 lost messages,
+and 2,604 orders sent back to the queue.
+
+Two earlier versions failed. Trusting a robot's last report until the next one let a robot that
+had moved on be run into: with one message in five lost, robot safety stopped a robot at step 135
+of the first run. Keeping others out of every cell a silent robot may have reached still failed
+at step 1,362: the coordinator believed two robots on one cell, the silent one where it had been
+and another where it now was, and told a third robot to follow the wrong one. Now a robot heard
+this step wins its cell, and no robot follows a silent one.
+
+Runs without faults did not change: the baseline reference still matches, and every Stage 4 and
+Stage 5 benchmark above gives the same log hash run for run.
+
+What this does not show: bursts of loss (each message is lost on its own), late messages (a
+message arrives in its step or never), a coordinator that fails, other lease and rescue times
+(5 and 120 steps throughout), and real radios (Stage 9a).
+
+```bash
+for p in 0.05 0.1 0.2 0.3; do
+  ./build/bench_planning --config benchmarks/configs/planning.yaml --fleet 10,25 --seeds 1-10 \
+    --loss $p
+done
+./build/bench_planning --config benchmarks/configs/faults.yaml --fleet 10,25 --seeds 1-10
+./build/bench_planning --config benchmarks/configs/faults.yaml --planners prioritized,ecbs \
+  --fleet 10,25 --seeds 1-10 --disable rolling_replanning
+./build/fuzz_sim --cases 1000 --seed 1
 ```
 
 ## Build and test (fleet_core)
@@ -417,7 +531,8 @@ fleet_core/        C++17 core, no ROS dependency
     fleet_manager.hpp
     simulation.hpp
     sweep.hpp      fleet sizes x seeds, aggregation, reference check
-  apps/            run_sim, run_sweep, bench_allocation, bench_planning, predict_cost
+    fuzz.hpp       random fault scenarios, their checks, shrinking a failure
+  apps/            run_sim, run_sweep, bench_allocation, bench_planning, fuzz_sim, predict_cost
   tests/           GoogleTest suite
 fleet_msgs/        ROS 2 messages
 fleet_ros/         ROS 2 adapter node
@@ -446,7 +561,7 @@ Apache License 2.0. See [LICENSE](LICENSE).
 | 3 | Task allocation | done |
 | 4 | Lifelong MAPF, PIBT | done |
 | 5 | Execution and traffic | done |
-| 6 | Faults, fuzz harness | |
+| 6 | Faults, fuzz harness | done |
 | 7 | Benchmarks and evidence | |
 | 8 | Isaac Sim | |
 | 9a | Hardware in the loop | |

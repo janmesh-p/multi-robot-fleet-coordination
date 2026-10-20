@@ -40,6 +40,12 @@ const MotionRecord& lastStepOf(const GridExecutor& e, RobotId robot) {
   return e.lastStep().motion.at(static_cast<size_t>(robot));
 }
 
+// The coordinator sends every robot a command every step, and a permit is good for one step.
+void drive(GridExecutor& e, Timestep t, const std::vector<RobotCommand>& commands) {
+  e.dispatch(t, commands);
+  e.step(t);
+}
+
 TEST(GridExecutor, FollowingIntoAVacatedCellIsAllowed) {
   GridExecutor e(openMap(), {{2, 0}, {2, 1}}, 2, 0.0, 1);
   e.dispatch(0, {command(0, 0, {{2, 0}, {2, 1}}), command(1, 0, {{2, 1}, {2, 2}})});
@@ -90,12 +96,12 @@ TEST(GridExecutor, ARotatingCycleMovesTogether) {
 TEST(GridExecutor, WaitsPermitsAndHolds) {
   const TaskOrder task{1, {3, 4}, {0, 4}};
   GridExecutor e(openMap(), {{2, 0}}, 2, 0.0, 1);
-  e.dispatch(0, {command(0, 0, {{2, 0}, {2, 0}, {2, 1}, {2, 2}}, task, 2)});
-  e.step(0);
+  const std::vector<RobotCommand> plan = {command(0, 0, {{2, 0}, {2, 0}, {2, 1}, {2, 2}}, task, 2)};
+  drive(e, 0, plan);
   EXPECT_EQ(outcome(e, 0), MotionOutcome::kPlannedWait);
-  e.step(1);
+  drive(e, 1, plan);
   EXPECT_EQ(outcome(e, 0), MotionOutcome::kMoved);
-  e.step(2);
+  drive(e, 2, plan);
   EXPECT_EQ(outcome(e, 0), MotionOutcome::kNoPermit);  // permit ends at index 2, path goes on
   EXPECT_EQ(lastStepOf(e, 0).intended, (Cell{2, 2}));
   EXPECT_EQ(cellOf(e, 0), (Cell{2, 1}));
@@ -127,25 +133,26 @@ TEST(GridExecutor, ServiceAndDeliveryTiming) {
       ".....\n");
   const TaskOrder task{5, {0, 0}, {0, 4}};
   GridExecutor e(map, {{0, 1}}, 2, 0.0, 1);
-  e.dispatch(0, {command(0, 0, {{0, 1}, {0, 0}}, task)});
-  e.step(0);  // arrives and starts picking
+  const std::vector<RobotCommand> pick = {command(0, 0, {{0, 1}, {0, 0}}, task)};
+  drive(e, 0, pick);  // arrives and starts picking
   EXPECT_EQ(e.robots()[0].status, RobotStatus::kPicking);
-  e.step(1);
+  drive(e, 1, pick);
   EXPECT_EQ(outcome(e, 0), MotionOutcome::kService);
   EXPECT_TRUE(e.lastStep().pickups.empty());
-  e.step(2);  // second dwell step ends the pick
+  drive(e, 2, pick);  // second dwell step ends the pick
   ASSERT_EQ(e.lastStep().pickups.size(), 1U);
   EXPECT_EQ(e.lastStep().pickups[0].task, 5);
   EXPECT_EQ(e.robots()[0].status, RobotStatus::kToDropoff);
-  e.step(3);
+  drive(e, 3, pick);
   EXPECT_EQ(outcome(e, 0), MotionOutcome::kHold);  // carrying, waiting for a plan
 
-  e.dispatch(4, {command(0, 1, {{0, 0}, {0, 1}, {0, 2}, {0, 3}, {0, 4}}, task)});
-  for (Timestep t = 4; t <= 7; ++t) e.step(t);  // four moves; arrives at t = 7
+  const std::vector<RobotCommand> drop = {
+      command(0, 1, {{0, 0}, {0, 1}, {0, 2}, {0, 3}, {0, 4}}, task)};
+  for (Timestep t = 4; t <= 7; ++t) drive(e, t, drop);  // four moves; arrives at t = 7
   EXPECT_EQ(e.robots()[0].status, RobotStatus::kDropping);
-  e.step(8);
+  drive(e, 8, drop);
   EXPECT_TRUE(e.lastStep().deliveries.empty());
-  e.step(9);
+  drive(e, 9, drop);
   ASSERT_EQ(e.lastStep().deliveries.size(), 1U);
   EXPECT_EQ(e.lastStep().deliveries[0].robot, 0);
   EXPECT_EQ(e.robots()[0].status, RobotStatus::kIdle);
@@ -163,10 +170,11 @@ TEST(GridExecutor, PassingThroughItsStationDoesNotStartService) {
       "P...D\n"
       ".....\n");
   GridExecutor e(map, {{0, 1}}, 2, 0.0, 1);
-  e.dispatch(0, {command(0, 0, {{0, 1}, {0, 0}, {1, 0}}, TaskOrder{5, {0, 0}, {0, 4}})});
-  e.step(0);
+  const std::vector<RobotCommand> plan = {
+      command(0, 0, {{0, 1}, {0, 0}, {1, 0}}, TaskOrder{5, {0, 0}, {0, 4}})};
+  drive(e, 0, plan);
   EXPECT_EQ(e.robots()[0].status, RobotStatus::kToPickup);
-  e.step(1);
+  drive(e, 1, plan);
   EXPECT_EQ(cellOf(e, 0), (Cell{1, 0}));
 }
 
@@ -202,10 +210,9 @@ TEST(GridExecutor, DelaysAreSeededAndKeepTheirStreamAligned) {
     for (int32_t c = 4; c >= 0; --c) long_path.push_back({1, c});
     std::vector<RobotCommand> commands = {command(0, 0, long_path)};
     if (second_robot_moves) commands.push_back(command(1, 0, {{3, 0}, {3, 1}, {3, 2}}));
-    e.dispatch(0, commands);
     std::vector<MotionOutcome> outcomes;
     for (Timestep t = 0; t < 12; ++t) {
-      e.step(t);
+      drive(e, t, commands);
       outcomes.push_back(outcome(e, 0));
     }
     return outcomes;
@@ -263,20 +270,21 @@ TEST(GridExecutor, AClosureWaitsUntilItsCellsAreEmpty) {
   e.unblock({{3, 0}});  // robot 2 never left: its cell never closed
   EXPECT_FALSE(e.closing({3, 0}));
 
-  e.dispatch(0, {command(0, 0, {{1, 1}, {1, 2}, {1, 3}, {1, 2}}), command(1, 0, {{1, 3}, {0, 3}})});
-  e.step(0);
+  const std::vector<RobotCommand> plans = {command(0, 0, {{1, 1}, {1, 2}, {1, 3}, {1, 2}}),
+                                           command(1, 0, {{1, 3}, {0, 3}})};
+  drive(e, 0, plans);
   EXPECT_EQ(outcome(e, 0), MotionOutcome::kMoved);  // through its own closure, still open
   EXPECT_EQ(outcome(e, 1), MotionOutcome::kMoved);
   EXPECT_FALSE(e.map().isBlocked({1, 1}));  // robot 0 is still inside
-  e.step(1);
+  drive(e, 1, plans);
   EXPECT_EQ(outcome(e, 0), MotionOutcome::kMoved);
   EXPECT_TRUE(e.map().isBlocked({1, 1}));  // out, so both cells close
   EXPECT_TRUE(e.map().isBlocked({1, 2}));
-  e.step(2);
+  drive(e, 2, plans);
   EXPECT_EQ(outcome(e, 0), MotionOutcome::kBlockedCell);  // no robot enters a closed cell
   EXPECT_FALSE(isSafetyStop(MotionOutcome::kBlockedCell));
   e.unblock({{1, 1}, {1, 2}});
-  e.step(3);
+  drive(e, 3, plans);
   EXPECT_EQ(outcome(e, 0), MotionOutcome::kMoved);
   EXPECT_THROW(e.block({{9, 9}}), std::out_of_range);
 }
@@ -292,6 +300,145 @@ TEST(GridExecutor, ReportsCountUpAndSpawnIsChecked) {
   EXPECT_THROW(GridExecutor(GridMap::fromString("#.\n"), {{0, 0}}, 2, 0.0, 1),
                std::invalid_argument);
   EXPECT_THROW(e.dispatch(0, {command(7, 0, {{0, 0}})}), std::out_of_range);
+}
+
+// Stage 6: the link, deaths, and safe stop.
+
+TEST(GridExecutor, APermitIsGoodForTheStepItArrivesIn) {
+  GridExecutor e(openMap(), {{2, 0}}, 2, 0.0, 1);
+  const std::vector<RobotCommand> plan = {command(0, 0, {{2, 0}, {2, 1}, {2, 2}})};
+  drive(e, 0, plan);
+  EXPECT_EQ(cellOf(e, 0), (Cell{2, 1}));
+  e.step(1);  // nothing arrived: it waits, as after a missed step
+  EXPECT_EQ(outcome(e, 0), MotionOutcome::kNoCommand);
+  EXPECT_EQ(lastStepOf(e, 0).intended, (Cell{2, 2}));
+  EXPECT_EQ(cellOf(e, 0), (Cell{2, 1}));
+  EXPECT_FALSE(isSafetyStop(MotionOutcome::kNoCommand));
+  drive(e, 2, plan);
+  EXPECT_EQ(cellOf(e, 0), (Cell{2, 2}));
+}
+
+TEST(GridExecutor, LossDropsMessagesFromAFixedStream) {
+  const auto lost = [](double p, uint64_t seed) {
+    ExecutorFaults faults;
+    faults.packet_loss = p;
+    faults.link_seed = seed;
+    GridExecutor e(openMap(), {{0, 0}, {3, 4}}, 2, 0.0, 1, faults);
+    std::vector<size_t> heard;
+    for (Timestep t = 0; t < 400; ++t) {
+      heard.push_back(e.collectReports(t).size());
+      e.dispatch(t, {command(0, 0, {{0, 0}}), command(1, 0, {{3, 4}})});
+      e.step(t);
+    }
+    return std::make_pair(heard, std::make_pair(e.reportsLost(), e.commandsLost()));
+  };
+  const auto a = lost(0.25, 7);
+  EXPECT_EQ(a, lost(0.25, 7));
+  EXPECT_NE(a.first, lost(0.25, 8).first);
+  EXPECT_GT(a.second.first, 150);  // 800 reports, a quarter lost
+  EXPECT_LT(a.second.first, 250);
+  EXPECT_GT(a.second.second, 150);
+  EXPECT_LT(a.second.second, 250);
+  const auto none = lost(0.0, 7);
+  EXPECT_EQ(none.second, std::make_pair(int64_t{0}, int64_t{0}));
+}
+
+TEST(GridExecutor, AnOutageSilencesOneRobotBothWays) {
+  GridExecutor e(openMap(), {{0, 0}, {3, 0}}, 2, 0.0, 1);
+  EXPECT_EQ(e.collectReports(0).size(), 2U);
+  const std::vector<RobotCommand> plans = {command(0, 0, {{0, 0}, {0, 1}, {0, 2}, {0, 3}}),
+                                           command(1, 0, {{3, 0}, {3, 1}, {3, 2}, {3, 3}})};
+  drive(e, 0, plans);
+  e.outage(0, 1, 2);  // steps 1 and 2
+  for (Timestep t = 1; t <= 2; ++t) {
+    const std::vector<RobotReport> heard = e.collectReports(t);
+    ASSERT_EQ(heard.size(), 1U);
+    EXPECT_EQ(heard[0].robot, 1);
+    drive(e, t, plans);
+    EXPECT_EQ(outcome(e, 0), MotionOutcome::kNoCommand);
+    EXPECT_EQ(outcome(e, 1), MotionOutcome::kMoved);
+  }
+  EXPECT_EQ(e.collectReports(3).size(), 2U);
+  drive(e, 3, plans);
+  EXPECT_EQ(cellOf(e, 0), (Cell{0, 2}));
+  EXPECT_EQ(e.reportsLost(), 2);
+  EXPECT_EQ(e.commandsLost(), 2);
+  EXPECT_THROW(e.outage(5, 0, 1), std::out_of_range);
+}
+
+TEST(GridExecutor, SafeStopHoldsAndPausesServiceUntilACommandArrives) {
+  const GridMap map = GridMap::fromString("P...D\n");
+  ExecutorFaults faults;
+  faults.safe_stop_after = 2;
+  GridExecutor e(map, {{0, 1}}, 3, 0.0, 1, faults);
+  const std::vector<RobotCommand> pick = {
+      command(0, 0, {{0, 1}, {0, 0}}, TaskOrder{5, {0, 0}, {0, 4}})};
+  drive(e, 0, pick);  // arrives and starts a 3-step pick
+  e.step(1);
+  e.step(2);
+  EXPECT_EQ(outcome(e, 0), MotionOutcome::kService);  // silent for 2 steps: still working
+  e.step(3);
+  EXPECT_EQ(outcome(e, 0), MotionOutcome::kSafeStop);  // silent for 3: stops
+  e.step(4);
+  EXPECT_TRUE(e.lastStep().pickups.empty());  // service waits
+  const RobotReport report = e.collectReports(5).at(0);
+  EXPECT_EQ(report.status, RobotStatus::kSafeStop);
+  EXPECT_EQ(report.task, std::optional<TaskId>(5));
+  EXPECT_FALSE(report.carrying);
+  drive(e, 5, pick);
+  EXPECT_EQ(outcome(e, 0), MotionOutcome::kService);
+  EXPECT_EQ(e.lastStep().pickups.size(), 1U);  // the last dwell step
+  EXPECT_TRUE(e.collectReports(6).at(0).carrying);
+}
+
+TEST(GridExecutor, ADeadRobotBlocksItsCellUntilItIsTakenAway) {
+  ExecutorFaults faults;
+  faults.rescue_after = 3;
+  GridExecutor e(openMap(), {{2, 1}, {2, 0}}, 2, 0.0, 1, faults);
+  drive(e, 0, {command(0, 0, {{2, 1}}, TaskOrder{5, {0, 0}, {0, 4}})});
+  e.kill(0, 1);
+  e.kill(0, 1);  // once is enough
+  EXPECT_EQ(e.collectReports(1).size(), 1U);
+  EXPECT_FALSE(e.snapshot().holding[0].has_value());  // its order is lost with it
+  const std::vector<RobotCommand> behind = {command(1, 0, {{2, 0}, {2, 1}})};
+  for (Timestep t = 1; t <= 3; ++t) {
+    drive(e, t, behind);
+    EXPECT_EQ(outcome(e, 0), MotionOutcome::kDead);
+    EXPECT_EQ(outcome(e, 1), MotionOutcome::kBlockedOccupied);
+    EXPECT_TRUE(e.lastStep().removed.empty());
+  }
+  drive(e, 4, behind);  // three steps after it died
+  EXPECT_EQ(e.lastStep().removed, std::vector<RobotId>{0});
+  EXPECT_EQ(outcome(e, 1), MotionOutcome::kMoved);
+  const TruthSnapshot after = e.snapshot();
+  EXPECT_FALSE(after.on_floor[0]);
+  EXPECT_TRUE(after.on_floor[1]);
+  EXPECT_EQ(after.cells[1], (Cell{2, 1}));
+  EXPECT_EQ(after.status[0], RobotStatus::kDead);
+  EXPECT_THROW(e.kill(9, 0), std::out_of_range);
+}
+
+TEST(GridExecutor, CommandsSayWhichOrderARobotHolds) {
+  const GridMap map = GridMap::fromString(
+      "P...D\n"
+      ".....\n");
+  const TaskOrder five{5, {0, 0}, {0, 4}};
+  const TaskOrder six{6, {0, 0}, {0, 4}};
+  GridExecutor e(map, {{1, 1}}, 0, 0.0, 1);
+  drive(e, 0, {command(0, 0, {{1, 1}, {1, 0}}, five)});
+  EXPECT_EQ(e.robots()[0].task->id, 5);
+  drive(e, 1, {command(0, 0, {{1, 1}, {1, 0}})});  // the order went to another robot
+  EXPECT_FALSE(e.robots()[0].task.has_value());
+  EXPECT_EQ(e.robots()[0].status, RobotStatus::kIdle);
+  drive(e, 2, {command(0, 1, {{1, 0}, {0, 0}}, six)});  // picks 6 up on arrival
+  EXPECT_EQ(e.robots()[0].task->id, 6);
+  EXPECT_TRUE(e.robots()[0].carrying);
+  drive(e, 3, {command(0, 2, {{0, 0}, {0, 1}, {0, 2}, {0, 3}, {0, 4}}, six)});
+  for (Timestep t = 4; t <= 6; ++t)
+    drive(e, t, {command(0, 2, {{0, 0}, {0, 1}, {0, 2}, {0, 3}, {0, 4}}, six)});
+  EXPECT_EQ(e.robots()[0].last_completed, std::optional<TaskId>(6));
+  drive(e, 7, {command(0, 2, {{0, 4}}, six)});  // sent before its delivery was heard
+  EXPECT_FALSE(e.robots()[0].task.has_value());
 }
 
 }  // namespace

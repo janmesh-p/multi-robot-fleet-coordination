@@ -42,8 +42,8 @@ enum class RobotStatus : uint8_t {
   kPicking,    // dwelling at the pickup station
   kToDropoff,  // carrying, heading to the dropoff station
   kDropping,   // dwelling at the dropoff station
-  kSafeStop,   // commands stopped arriving; holding position (Stage 6)
-  kDead,       // coordinator belief only (Stage 6)
+  kSafeStop,   // no command for longer than the timeout: holding, service paused (Stage 6)
+  kDead,       // died, or declared dead by the coordinator (Stage 6)
 };
 
 enum class TaskStatus : uint8_t { kPending, kAssigned, kPickedUp, kDone };
@@ -68,6 +68,7 @@ struct Task {
   std::optional<Timestep> assigned_at{};
   std::optional<Timestep> picked_at{};
   std::optional<Timestep> done_at{};
+  int32_t requeues{0};  // times taken back from a robot (Stage 6)
 };
 
 struct Assignment {
@@ -98,6 +99,7 @@ struct RobotReport {
   Cell cell{};
   RobotStatus status{RobotStatus::kIdle};
   std::optional<TaskId> task{};            // task held: heading to pickup or carrying
+  bool carrying{false};                    // has picked up `task` (Stage 6: safe stop hides it)
   std::optional<TaskId> last_completed{};  // newest delivery, repeated until the next one
   int32_t plan_id{-1};                     // newest command applied
   int32_t path_index{0};                   // progress along that command's path

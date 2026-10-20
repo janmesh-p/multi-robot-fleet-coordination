@@ -33,6 +33,9 @@ class TaskManager {
   void markPickedUp(TaskId id, Timestep now);
   void markDone(TaskId id, Timestep now);
   void requeue(TaskId id, Timestep now);
+  // A robot that was out of touch reports this delivery (Stage 6): done by that robot, whatever
+  // state the order was in. Throws if it is already done.
+  void markDoneBy(TaskId id, RobotId robot, Timestep now);
 
   int32_t doneCount() const { return done_count_; }
 

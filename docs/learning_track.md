@@ -36,7 +36,7 @@ hand-tuned cost? Either answer is a result, and both get reported the same way.
 | 3 (done) | Allocators `hungarian`, `cost_aware`, `learned`; config key `allocation.model_file`; `assignments.csv` in every run directory; the `predict_cost` tool. Planning is still `independent_astar`, so runs still deadlock. Use this data to test your plumbing, not to train. |
 | 4 (done) | Coordinated planners, including `pibt`. With `pibt` the fleet keeps moving: no frozen run and no safety stop in its 69 runs of the planning benchmark in README.md. One rule changed with them: a robot whose station has no free waiting cell waits at home instead of where it stands. This is the first data worth training on. |
 | 5 (done) | Traffic rules that keep plans safe when robots run late (`execution.delay_probability`), aisle closures (`block_cells` and `unblock_cells` events), and the starvation guard (section 1). Under heavy load the guard changes which pairs get chosen, and `dist_to_pickup` now routes around closed cells. No column or config key changed. Recollect, retrain, and rerun the evaluation (section 11). |
-| 6 | Faults. They change how robots move, so recollect, retrain, and rerun the evaluation after it lands. |
+| 6 (done) | Faults: lost reports and commands (`faults.packet_loss`), comm outages, robot deaths (`comm_outage` and `robot_death` events), and robots declared dead by mistake. A robot heard from late may be somewhere other than its last report, so features computed from that report are stale; nothing in the core corrects them. No column or config key changed. Recollect, retrain, and rerun the evaluation after it lands. |
 
 The README Stages table says which stages have landed.
 
@@ -110,10 +110,14 @@ What the core guarantees, so your tests can rely on it:
   that is traffic, queueing, and missed steps. So `steps_to_pickup >= dist_to_pickup` on every
   row where `steps_to_pickup` is not -1, as long as no robot reports are lost
   (`faults.packet_loss: 0` and no `comm_outage` events) and no closed cell reopens on the way
-  (no `unblock_cells` event), the defaults. In the example row, the robot lost 6 steps.
+  (no `unblock_cells` event, and no `robot_death` event: the cells a robot declared dead may
+  stand on close until it is taken away), the defaults. In the example row, the robot lost 6
+  steps.
 - `available_robots + busy_robots == alive_robots` on every row.
-- An order requeued after its robot dies (Stage 6) ends that row as `requeued` and gets a new row
-  when it is assigned again.
+- An order taken back from a robot (Stage 6) ends that row as `requeued` and gets a new row when
+  the allocator assigns it again. That happens when its robot is declared dead, and when a robot
+  that was out of touch turns out to carry the order or to have delivered it. An order given back
+  to the robot that carries it gets no new row.
 - The column set and order are fixed for this version. A stage that adds a column says so here,
   and your schema check must fail loudly until you update it.
 

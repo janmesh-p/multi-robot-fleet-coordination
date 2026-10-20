@@ -20,6 +20,8 @@ struct RobotBelief {
   uint32_t last_seq{0};                    // newest accepted report sequence number
   int32_t plan_id{-1};                     // newest command the robot has applied
   int32_t path_index{0};                   // robot progress along that command's path
+  bool carrying{false};                    // has picked up `task`
+  bool removed{false};                     // dead and taken off the floor (Stage 6)
 };
 
 // Blocked or reopened cells, from the fault script or the overhead camera (Stage 9b).
@@ -52,8 +54,11 @@ class WorldModel {
 
   void applyObservation(const CellObservation& observation);
 
-  // FaultManager only (Stage 6).
+  // Stage 6. A dead robot keeps its cell until it is removed from the floor. revive() takes back a
+  // robot declared dead by mistake: it applies the report if it is newer than the last one.
   void markDead(RobotId id);
+  void markRemoved(RobotId id);
+  void revive(const RobotReport& report);
 
  private:
   RobotBelief& mutableRobot(RobotId id);

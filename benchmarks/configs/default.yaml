@@ -45,7 +45,10 @@ execution:
   delay_probability: 0.0      # chance that a robot misses a step
 
 faults:
-  heartbeat_timeout_steps: 5  # silent this long: robot declared dead
+  # The coordinator learns of a fault only from reports that stop. A robot silent for longer than
+  # heartbeat_timeout_steps is declared dead, even one only out of touch, and a robot that hears no
+  # command for that long stops where it is until one arrives (Stage 6).
+  heartbeat_timeout_steps: 5  # silent longer than this: robot declared dead
   rescue_steps: 120           # dead robot removed from the floor after this long
   packet_loss: 0.0            # drop probability per report and per command
   events: []

@@ -59,7 +59,7 @@ MetricsCollector::MetricsCollector(const std::filesystem::path& out_dir) : out_d
   steps_ << std::setprecision(10)
          << "t,orders_created,deliveries,moved,planned_wait,hold,service,idle,delayed,blocked,"
             "assignments,robots_planned,planning_ms,expansions,on_cycle,behind,stalled,yield,"
-            "no_permit,deadlocks_resolved\n";
+            "no_permit,deadlocks_resolved,no_command,safe_stop,declared_dead,requeued\n";
   positions_ << "t,robot,row,col,status,outcome,waits_for,on_cycle\n";
 }
 
@@ -80,7 +80,7 @@ void MetricsCollector::recordStep(const StepTruth& step, const TruthSnapshot& af
                                   const TickStats& tick, int32_t orders_created,
                                   const ProgressStep& progress) {
   int32_t moved = 0, planned_wait = 0, hold = 0, service = 0, idle = 0, delayed = 0, blocked = 0,
-          yielded = 0, no_permit = 0;
+          yielded = 0, no_permit = 0, no_command = 0, safe_stop = 0;
   for (const MotionRecord& m : step.motion) {
     switch (m.outcome) {
       case MotionOutcome::kMoved:
@@ -115,6 +115,12 @@ void MetricsCollector::recordStep(const StepTruth& step, const TruthSnapshot& af
       case MotionOutcome::kNoPermit:
         ++no_permit;
         break;
+      case MotionOutcome::kNoCommand:
+        ++no_command;
+        break;
+      case MotionOutcome::kSafeStop:
+        ++safe_stop;
+        break;
     }
   }
   steps_ << step.t << ',' << orders_created << ',' << step.deliveries.size() << ',' << moved << ','
@@ -122,7 +128,8 @@ void MetricsCollector::recordStep(const StepTruth& step, const TruthSnapshot& af
          << blocked << ',' << tick.assignments << ',' << tick.robots_planned << ','
          << tick.planning_ms << ',' << tick.expansions << ',' << progress.on_cycle_count << ','
          << progress.behind_count << ',' << progress.stalled_count << ',' << yielded << ','
-         << no_permit << ',' << tick.deadlocks_resolved << '\n';
+         << no_permit << ',' << tick.deadlocks_resolved << ',' << no_command << ',' << safe_stop
+         << ',' << tick.robots_declared_dead << ',' << tick.tasks_requeued << '\n';
   for (size_t i = 0; i < step.motion.size(); ++i) {
     const MotionRecord& m = step.motion[i];
     positions_ << step.t << ',' << i << ',' << m.to.row << ',' << m.to.col << ','

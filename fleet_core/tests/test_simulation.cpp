@@ -254,11 +254,6 @@ TEST(Simulation, RejectsWhatThisStageCannotRun) {
     }
   };
   Config c = smallConfig();
-  c.faults.packet_loss = 0.05;
-  expectRejected(c, "Stage 6");
-  c = smallConfig();
-  c.faults.events = {FaultEvent{5, FaultType::kRobotDeath, 0, {}, 0}};
-  expectRejected(c, "Stage 6");
   // Closures shut aisle cells only, and the open aisles must keep reaching every station and
   // parking cell. (1, 1) is the only aisle cell next to the parking cell above it.
   c = smallConfig();

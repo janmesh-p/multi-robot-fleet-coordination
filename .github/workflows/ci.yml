@@ -15,9 +15,11 @@ jobs:
           - name: release
             build_type: Release
             sanitize: "OFF"
+            fuzz_cases: 300
           - name: debug-asan-ubsan
             build_type: Debug
             sanitize: "ON"
+            fuzz_cases: 20
     steps:
       - uses: actions/checkout@v5
 
@@ -66,6 +68,15 @@ jobs:
           ./build/bench_planning --config benchmarks/configs/closure.yaml
           --planners pibt,windowed_coop_astar,prioritized,ecbs,cbs --fleet 10 --seeds 1
           --out build/bench_closure.csv
+
+      - name: Deaths, outages, and lost messages run an hour without a violation
+        run: >
+          ./build/bench_planning --config benchmarks/configs/faults.yaml
+          --planners pibt,windowed_coop_astar,prioritized,ecbs,cbs --fleet 10 --seeds 1
+          --out build/bench_faults.csv
+
+      - name: Fuzz harness finds no failure
+        run: ./build/fuzz_sim --cases ${{ matrix.fuzz_cases }} --seed 1 --out build/fuzz_failures
 
   format:
     runs-on: ubuntu-22.04

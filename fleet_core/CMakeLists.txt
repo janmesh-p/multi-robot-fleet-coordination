@@ -9,7 +9,7 @@ else()
 endif()
 
 option(FLEET_CORE_BUILD_TESTS "Build fleet_core unit tests" ${FLEET_CORE_TOP_LEVEL})
-option(FLEET_CORE_BUILD_APPS "Build fleet_core apps (run_sim, run_sweep, predict_cost, bench_allocation, bench_planning)" ${FLEET_CORE_TOP_LEVEL})
+option(FLEET_CORE_BUILD_APPS "Build fleet_core apps (run_sim, run_sweep, predict_cost, bench_allocation, bench_planning, fuzz_sim)" ${FLEET_CORE_TOP_LEVEL})
 option(FLEET_WERROR "Treat compiler warnings as errors" ON)
 option(FLEET_SANITIZE "Build with AddressSanitizer and UndefinedBehaviorSanitizer" OFF)
 
@@ -71,6 +71,7 @@ add_library(fleet_core
   src/fleet_manager.cpp
   src/simulation.cpp
   src/sweep.cpp
+  src/fuzz.cpp
 )
 add_library(fleet_core::fleet_core ALIAS fleet_core)
 target_include_directories(fleet_core PUBLIC "${CMAKE_CURRENT_SOURCE_DIR}/include")
@@ -80,7 +81,7 @@ set_target_properties(fleet_core PROPERTIES POSITION_INDEPENDENT_CODE ON)
 fleet_configure_target(fleet_core)
 
 if(FLEET_CORE_BUILD_APPS)
-  foreach(app run_sim run_sweep predict_cost bench_allocation bench_planning)
+  foreach(app run_sim run_sweep predict_cost bench_allocation bench_planning fuzz_sim)
     add_executable(${app} apps/${app}.cpp)
     target_link_libraries(${app} PRIVATE fleet_core)
     fleet_configure_target(${app})

@@ -3,6 +3,7 @@
 //   run_sim --config <file.yaml> [--out <dir>] [--print-config]
 //
 // Exit codes: 0 run finished, 1 error, 2 bad arguments, 3 aborted on an invariant violation.
+#include <algorithm>
 #include <cstdio>
 #include <exception>
 #include <filesystem>
@@ -124,6 +125,20 @@ int main(int argc, char** argv) {
               << "hash       " << hex16(s.log_hash) << "\n"
               << "wall       " << fixed(s.wall_seconds, 2) << " s\n"
               << "output     " << out_dir.string() << "\n";
+    const auto robot_fault = [](const fleet_core::FaultEvent& e) {
+      return e.type == fleet_core::FaultType::kRobotDeath ||
+             e.type == fleet_core::FaultType::kCommOutage;
+    };
+    if (config.faults.packet_loss > 0.0 ||
+        std::any_of(config.faults.events.begin(), config.faults.events.end(), robot_fault)) {
+      std::cout << "link       " << s.reports_lost << " reports and " << s.commands_lost
+                << " commands lost; " << s.no_command_steps << " robot-steps without a command, "
+                << s.safe_stop_steps << " in safe stop\n"
+                << "faults     " << s.robots_died << " died, " << s.declared_dead
+                << " declared dead (" << s.false_deaths << " still alive), " << s.reconciled
+                << " back after one, " << s.rescued << " taken away; " << s.requeued
+                << " orders requeued, " << s.duplicate_deliveries << " delivered twice\n";
+    }
     for (size_t i = 0; i < result.violations.size() && i < 5; ++i) {
       const fleet_core::Violation& v = result.violations[i];
       std::cout << "violation  t=" << v.t << " " << fleet_core::toString(v.kind) << ": " << v.detail

@@ -2,6 +2,7 @@
 
 #include <cstdint>
 #include <map>
+#include <set>
 #include <string>
 #include <vector>
 
@@ -46,6 +47,19 @@ struct RunSummary {
   int64_t deadlocks_resolved{0};     // whole run: wait-for cycles the coordinator replanned away
   double max_completion_steps{0.0};  // slowest of the orders in mean_completion_steps
   Timestep oldest_open_steps{0};     // age at the end of the oldest order not delivered; 0: none
+
+  // Stage 6, whole run. Not in summary.csv either.
+  int64_t reports_lost{0};          // reports from live robots the link dropped
+  int64_t commands_lost{0};         // commands to live robots the link dropped
+  int32_t robots_died{0};           // robots a robot_death event killed
+  int32_t declared_dead{0};         // heartbeat leases that ran out
+  int32_t false_deaths{0};          // declared dead while still alive
+  int32_t reconciled{0};            // robots declared dead that reported again
+  int32_t rescued{0};               // dead robots taken off the floor
+  int64_t requeued{0};              // orders taken back from robots
+  int64_t duplicate_deliveries{0};  // deliveries of an order already delivered
+  int64_t no_command_steps{0};      // robot-steps waiting because no command arrived
+  int64_t safe_stop_steps{0};       // robot-steps in safe stop
 
   int64_t violations{0};
   bool aborted{false};
@@ -100,6 +114,10 @@ class RunStats {
   int64_t traffic_holds_{0};
   int64_t deadlocks_resolved_{0};
   std::map<TaskId, Timestep> open_{};  // created, not yet delivered
+  std::set<TaskId> delivered_{};       // an order delivered again counts once (Stage 6)
+  int64_t duplicate_deliveries_{0};
+  int64_t no_command_steps_{0};
+  int64_t safe_stop_steps_{0};
 };
 
 }  // namespace fleet_core

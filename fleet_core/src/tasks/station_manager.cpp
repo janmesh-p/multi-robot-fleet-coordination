@@ -84,11 +84,31 @@ void StationManager::assignWaitingCell(RobotId robot, const Cell& station) {
   const auto it = candidates_.find(station);
   if (it == candidates_.end()) throw std::out_of_range("StationManager: not a station");
   for (const Cell& c : it->second) {
-    if (taken_.count(c) > 0) continue;
+    if (taken_.count(c) > 0 || closed_.count(c) > 0) continue;
     taken_.insert(c);
     waiting_[robot] = c;
     return;
   }
+}
+
+void StationManager::refresh(const GridMap& map) {
+  if (!enabled_) return;
+  closed_.clear();
+  for (const auto& [station, cells] : candidates_) {
+    for (const Cell& c : cells) {
+      if (map.isBlocked(c)) closed_.insert(c);
+    }
+  }
+  std::vector<std::pair<RobotId, Cell>> moved;  // robot, the station it waits for
+  for (auto& [station, queue] : queues_) {
+    for (size_t k = 1; k < queue.size(); ++k) {
+      const auto it = waiting_.find(queue[k]);
+      if (it == waiting_.end() || closed_.count(it->second) == 0) continue;
+      moved.emplace_back(queue[k], station);
+    }
+  }
+  for (const auto& [robot, station] : moved) freeWaitingCell(robot);
+  for (const auto& [robot, station] : moved) assignWaitingCell(robot, station);
 }
 
 void StationManager::freeWaitingCell(RobotId robot) {
