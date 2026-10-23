@@ -36,7 +36,7 @@ hand-tuned cost? Either answer is a result, and both get reported the same way.
 | 3 (done) | Allocators `hungarian`, `cost_aware`, `learned`; config key `allocation.model_file`; `assignments.csv` in every run directory; the `predict_cost` tool. Planning is still `independent_astar`, so runs still deadlock. Use this data to test your plumbing, not to train. |
 | 4 (done) | Coordinated planners, including `pibt`. With `pibt` the fleet keeps moving: no frozen run and no safety stop in its 69 runs of the planning benchmark in README.md. One rule changed with them: a robot whose station has no free waiting cell waits at home instead of where it stands. This is the first data worth training on. |
 | 5 (done) | Traffic rules that keep plans safe when robots run late (`execution.delay_probability`), aisle closures (`block_cells` and `unblock_cells` events), and the starvation guard (section 1). Under heavy load the guard changes which pairs get chosen, and `dist_to_pickup` now routes around closed cells. No column or config key changed. Recollect, retrain, and rerun the evaluation (section 11). |
-| 6 (done) | Faults: lost reports and commands (`faults.packet_loss`), comm outages, robot deaths (`comm_outage` and `robot_death` events), and robots declared dead by mistake. A robot heard from late may be somewhere other than its last report, so features computed from that report are stale; nothing in the core corrects them. No column or config key changed. Recollect, retrain, and rerun the evaluation after it lands. |
+| 6 (done) | Faults: lost reports and commands (`faults.packet_loss`), comm outages, robot deaths (`comm_outage` and `robot_death` events), and robots declared dead by mistake. A robot heard from late may be somewhere other than its last report, so features computed from that report are stale; nothing in the core corrects them. No column or config key changed. Recollect, retrain, and rerun the evaluation after it lands. Amended on Oct 23, after Stage 6 landed: `default.yaml` keeps faults off, and Stage 6 left runs without faults unchanged, so the recheck in section 11 replaces the rerun. |
 
 The README Stages table says which stages have landed.
 
@@ -557,7 +557,20 @@ models, and the success criterion, now with delay 0.2 in every run. Commit the c
   tables. Say that it was chosen after two rounds without a win, so a win here is weaker evidence
   than a win in the first round would have been. Report a loss the same way.
 
-After Stage 6: the same again. Optional, in this order:
+After Stage 6: the same again. Amended on Oct 23, after Stage 6 landed: that rerun would repeat
+runs that came out identical, so run the recheck instead, on `main`, in the clone that holds the
+data:
+
+```bash
+learning/.venv/bin/python -m fleet_learning.recheck
+```
+
+It reruns every phase made on the Stage 5 core with the checked-out core, and compares every
+`sweep.csv` column except timing, `log_hash` included, and every `assignments.csv` with what those
+phases wrote. Report its total line in `learning/README.md`. Do the same after any later stage. If
+it reports any difference, rerun the whole protocol on the new commit, as before.
+
+Optional after Stage 6, in this order:
 
 1. One more collection round with `learned` added to the allocator grid, then retrain. Data from
    the model's own choices shrinks the selection bias. Report both rounds.
