@@ -3,12 +3,19 @@
 The contract is [docs/learning_track.md](../docs/learning_track.md). Section numbers below refer
 to it. One step is one simulated second.
 
-Status: Stage 5 (pibt). Two rounds, reported side by side: the Stage 4 round and the Stage 5
+Status: Stage 6 (pibt). Two rounds, reported side by side: the Stage 4 round and the Stage 5
 rerun. Each round's success criterion was committed before its final runs: commit `8133d47`
 for Stage 4 and commit `6471ec6` for Stage 5. A third round with late robots
 (`execution.delay_probability: 0.2`), added to the contract after those two, is reported on its
 own in [Late-robot round](#late-robot-round-delay-02). Its criterion was committed before its
 final runs, in commit `05440c6`.
+
+Stage 6 (commit `a0f820f`) adds lost messages, comm outages, robot deaths, and leases.
+`default.yaml` keeps them off, and so do these rounds. `python -m fleet_learning.recheck` reran
+every phase made on the Stage 5 core at that commit: 6 phases, 62 sweeps, 3480 runs, and 885132
+assignment rows. No `sweep.csv` column except timing differed, `log_hash` included, and no
+`assignments.csv` differed. The same data and model files give the same tables, so every number
+here holds for Stage 6.
 
 ## Result
 
@@ -382,8 +389,8 @@ passed over, not how long the queue is.
 
 ## Limits
 
-- One map (`warehouse_small`) and one planner (`pibt`). Faults (Stage 6) are not in yet, and the
-  protocol must be rerun after it lands.
+- One map (`warehouse_small`) and one planner (`pibt`). No run here loses a message or a robot.
+  Stage 6 faults are off in `default.yaml`, so these rounds do not test them.
 - `default.yaml` keeps late robots (`execution.delay_probability`) and closures off, and the
   section 7 grid does not change them. So the Stage 5 round tests the starvation guard and the
   new execution rules, not late robots or closed aisles.
@@ -728,3 +735,14 @@ $P -m fleet_learning.closed_loop report learning/data/<commit>/delay020/closed_l
 it runs, so the Stage 4 closed-loop runs use the Stage 4 core. Every number except wall time
 comes out the same on a clean checkout. The SHA-256 of each model file is in the closed-loop
 manifests.
+
+Stage 6 check. Run it on `main` (Stage 6 or later), in the clone that holds the Stage 5 and
+late-robot data, since the recorded commands point at files there. It builds the core, reruns
+every phase made on the Stage 5 core, and compares the results (about 200 MB of free `/tmp` per
+job; `--jobs` limits the jobs):
+
+```bash
+learning/.venv/bin/python -m fleet_learning.recheck
+```
+
+It ends with `total      6 phases, 62 sweeps, 3480 runs, 885132 assignment rows, 0 differences`.
