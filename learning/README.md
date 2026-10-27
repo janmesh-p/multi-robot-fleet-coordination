@@ -3,7 +3,7 @@
 The contract is [docs/learning_track.md](../docs/learning_track.md). Section numbers below refer
 to it. One step is one simulated second.
 
-Status: Stage 6 (pibt). Two rounds, reported side by side: the Stage 4 round and the Stage 5
+Status: Stage 7 (pibt). Two rounds, reported side by side: the Stage 4 round and the Stage 5
 rerun. Each round's success criterion was committed before its final runs: commit `8133d47`
 for Stage 4 and commit `6471ec6` for Stage 5. A third round with late robots
 (`execution.delay_probability: 0.2`), added to the contract after those two, is reported on its
@@ -16,6 +16,12 @@ every phase made on the Stage 5 core at that commit: 6 phases, 62 sweeps, 3480 r
 assignment rows. No `sweep.csv` column except timing differed, `log_hash` included, and no
 `assignments.csv` differed. The same data and model files give the same tables, so every number
 here holds for Stage 6.
+
+Stage 7 (commit `80e5643`) adds benchmark evidence, a time budget in the CSV of
+`bench_planning`, and a map variant, `maps/warehouse_large_pockets.txt`. No run directory column
+and no config key changed. `python -m fleet_learning.recheck` at that commit ended with
+`total      6 phases, 62 sweeps, 3480 runs, 885132 assignment rows, 0 differences`, so every
+number here holds for Stage 7.
 
 ## Result
 
