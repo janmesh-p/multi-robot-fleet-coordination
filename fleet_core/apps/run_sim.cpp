@@ -45,6 +45,34 @@ std::string deadlockLine(const fleet_core::RunSummary& s) {
          std::to_string(s.blocked_behind) + " blocked behind";
 }
 
+// Where the robot time went after the warmup, in % of robot-steps (Stage 7).
+std::string timeLine(const fleet_core::RunSummary& s) {
+  const std::pair<const char*, int64_t> parts[] = {{"to pickup", s.time_drive_to_pickup},
+                                                   {"loaded", s.time_drive_loaded},
+                                                   {"free", s.time_drive_free},
+                                                   {"service", s.time_service},
+                                                   {"traffic", s.time_traffic},
+                                                   {"station wait", s.time_station_wait},
+                                                   {"idle", s.time_idle},
+                                                   {"stops", s.time_safety_stop},
+                                                   {"lost", s.time_lost}};
+  int64_t total = 0;
+  for (const auto& part : parts) total += part.second;
+  std::string out;
+  for (const auto& [name, steps] : parts) {
+    const double share = total == 0 ? 0.0 : 100.0 * static_cast<double>(steps) / total;
+    out += (out.empty() ? "" : ", ") + fixed(share, 1) + "% " + name;
+  }
+  return out;
+}
+
+// Share of the measured station-steps spent serving a robot.
+double stationBusy(const fleet_core::RunSummary& s) {
+  const int64_t measured = std::max<int64_t>(s.steps_run - s.warmup, 0);
+  const int64_t capacity = int64_t{s.stations} * measured;
+  return capacity == 0 ? 0.0 : static_cast<double>(s.time_service) / static_cast<double>(capacity);
+}
+
 }  // namespace
 
 int main(int argc, char** argv) {
@@ -95,6 +123,16 @@ int main(int argc, char** argv) {
               << fixed(s.p95_completion_steps, 1) << " p95 (" << s.completion_samples
               << " orders)\n"
               << "utilization " << fixed(s.utilization * 100.0, 1) << "%\n"
+              << "time       " << timeLine(s) << " (robot-steps, steady state)\n"
+              << "phases     "
+              << (s.completion_samples > 0
+                      ? fixed(s.mean_wait_for_robot_steps, 1) + " steps waiting for a robot, " +
+                            fixed(s.mean_to_pickup_steps, 1) + " to the pickup, " +
+                            fixed(s.mean_to_dropoff_steps, 1) + " to the dropoff (mean)"
+                      : std::string("none (no measured order delivered)"))
+              << "\n"
+              << "stations   " << s.stations << ", serving " << fixed(stationBusy(s) * 100.0, 1)
+              << "% of the time (steady state)\n"
               << "conflicts  " << s.conflicts << " robot-steps stopped by robot safety\n"
               << "traffic    " << s.delayed_steps << " robot-steps late, " << s.yields
               << " yielding, " << s.traffic_holds << " held; " << s.deadlocks_resolved

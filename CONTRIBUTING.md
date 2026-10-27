@@ -50,9 +50,10 @@ type defaults to Release.
   decision may depend on wall time, thread timing, or unseeded randomness.
 - Never edit `benchmarks/reference/`, and never weaken a CI check to make a change pass.
 - Every number in a README or report comes from a command in this repo, written next to the
-  number.
+  number. The README tables are rebuilt from `benchmarks/evidence/` by
+  `benchmarks/scripts/evidence.py`, and CI fails when a table and its evidence disagree.
 - Do not commit generated data: run directories, datasets, or any file over 1 MB. Small test
-  fixtures, model files, and figures are fine.
+  fixtures, model files, figures, and the benchmark CSVs in `benchmarks/evidence/` are fine.
 - C++ (owner): C++17, `clang-format` 18.1.3 (see README), warnings are errors, and a test for
   every behavior change.
 - Python (learning track): see [docs/learning_track.md](docs/learning_track.md).

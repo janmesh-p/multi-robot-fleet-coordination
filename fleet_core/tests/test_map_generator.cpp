@@ -24,7 +24,8 @@ std::string shippedMap(const std::string& name) {
   return out;
 }
 
-// The shipped maps are generator output; this keeps the files and the generator in sync.
+// The shipped maps are generator output, except the Stage 7 variant warehouse_large_pockets.txt
+// (checked in test_grid_map.cpp); this keeps the files and the generator in sync.
 TEST(MapGenerator, ShippedMapsMatchTheGenerator) {
   EXPECT_EQ(generateWarehouse(MapGeneratorConfig{5, 4, 6, 2, 4, 1}).toString(),
             shippedMap("warehouse_small.txt"));

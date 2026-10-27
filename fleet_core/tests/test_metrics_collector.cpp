@@ -168,6 +168,90 @@ TEST(RunStats, SteadyStateExcludesWarmup) {
   EXPECT_EQ(s.expansions, 20);
 }
 
+// Robot i has outcome outcomes[i] at every step. The first three move: robot 0 with no order,
+// robot 1 carrying one, robot 2 on its way to a pickup.
+TEST(RunStats, TimeBudgetPutsEveryRobotStepInOneClass) {
+  const std::vector<MotionOutcome> outcomes = {
+      MotionOutcome::kMoved,         MotionOutcome::kMoved,       MotionOutcome::kMoved,
+      MotionOutcome::kService,       MotionOutcome::kPlannedWait, MotionOutcome::kNoPermit,
+      MotionOutcome::kYield,         MotionOutcome::kHold,        MotionOutcome::kIdle,
+      MotionOutcome::kBlockedVertex, MotionOutcome::kBlockedSwap, MotionOutcome::kBlockedOccupied,
+      MotionOutcome::kDelayed,       MotionOutcome::kNoCommand,   MotionOutcome::kSafeStop,
+      MotionOutcome::kDead,          MotionOutcome::kBlockedCell, MotionOutcome::kInvalidStep};
+  const auto fleet = static_cast<int32_t>(outcomes.size());
+  RunStats stats(fleet, 2);
+  TruthSnapshot after;
+  after.cells.assign(outcomes.size(), Cell{0, 0});
+  after.alive.assign(outcomes.size(), true);
+  after.status.assign(outcomes.size(), RobotStatus::kToPickup);
+  after.holding.assign(outcomes.size(), TaskId{1});
+  after.holding[0] = std::nullopt;
+  after.status[0] = RobotStatus::kIdle;
+  after.status[1] = RobotStatus::kToDropoff;
+  for (Timestep t = 0; t < 7; ++t) {
+    StepTruth step;
+    step.t = t;
+    for (int32_t i = 0; i < fleet; ++i) {
+      step.motion.push_back(MotionRecord{i, {0, 0}, {0, 0}, {0, 0}, outcomes[i]});
+    }
+    stats.recordStep(step, after, TickStats{});
+  }
+
+  const RunSummary s = stats.summarize(Config{}, 7, 0.1, 0, false);
+  const int64_t measured = 5;  // steps 2 to 6
+  EXPECT_EQ(s.time_drive_free, measured);
+  EXPECT_EQ(s.time_drive_loaded, measured);
+  EXPECT_EQ(s.time_drive_to_pickup, measured);
+  EXPECT_EQ(s.time_service, measured);
+  EXPECT_EQ(s.time_traffic, 3 * measured);
+  EXPECT_EQ(s.time_station_wait, measured);
+  EXPECT_EQ(s.time_idle, measured);
+  EXPECT_EQ(s.time_safety_stop, 3 * measured);
+  EXPECT_EQ(s.time_lost, 6 * measured);
+  EXPECT_EQ(s.time_drive_to_pickup + s.time_drive_loaded + s.time_drive_free + s.time_service +
+                s.time_traffic + s.time_station_wait + s.time_idle + s.time_safety_stop +
+                s.time_lost,
+            fleet * measured);
+}
+
+// Order 5: created 2, assigned 3 (and again 4, which does not count), picked up 5, delivered 9.
+// Order 6 has no assignment or pickup on record; the phases still add up for it.
+TEST(RunStats, OrderPhasesAddUpToTheCompletionTime) {
+  RunStats stats(1, 2);
+  std::vector<Task> orders(3);
+  orders[0].order.id = 4;  // created in the warmup, so not measured
+  orders[0].created_at = 1;
+  orders[1].order.id = 5;
+  orders[1].created_at = 2;
+  orders[2].order.id = 6;
+  orders[2].created_at = 3;
+  stats.recordOrders(orders);
+  stats.recordAssignments(1, {4});
+  stats.recordAssignments(3, {5});
+  stats.recordAssignments(4, {5});
+  TruthSnapshot after;
+  after.cells = {Cell{0, 0}};
+  after.alive = {true};
+  after.status = {RobotStatus::kIdle};
+  after.holding = {std::nullopt};
+  StepTruth step;
+  step.motion = {MotionRecord{0, {0, 0}, {0, 0}, {0, 0}, MotionOutcome::kService}};
+  step.t = 5;
+  step.pickups = {Assignment{0, 5}};
+  stats.recordStep(step, after, TickStats{});
+  step.t = 9;
+  step.pickups.clear();
+  step.deliveries = {Assignment{0, 5}, Assignment{0, 6}, Assignment{0, 4}};
+  stats.recordStep(step, after, TickStats{});
+
+  const RunSummary s = stats.summarize(Config{}, 10, 0.1, 0, false);
+  EXPECT_EQ(s.completion_samples, 2);
+  EXPECT_DOUBLE_EQ(s.mean_completion_steps, (7.0 + 6.0) / 2.0);
+  EXPECT_DOUBLE_EQ(s.mean_wait_for_robot_steps, (1.0 + 0.0) / 2.0);
+  EXPECT_DOUBLE_EQ(s.mean_to_pickup_steps, (2.0 + 0.0) / 2.0);
+  EXPECT_DOUBLE_EQ(s.mean_to_dropoff_steps, (4.0 + 6.0) / 2.0);
+}
+
 TEST(RunStats, HashDependsOnTrajectoryOnly) {
   const auto run = [](int32_t col, double planning_ms) {
     RunStats stats(2, 0);

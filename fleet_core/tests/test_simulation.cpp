@@ -609,5 +609,41 @@ TEST(Simulation, CoordinatedPlannersRunTheShippedScenarioCleanly) {
   }
 }
 
+// The Stage 7 time budget and order phases on real runs: the baseline, which deadlocks, and pibt
+// with late robots and lost messages.
+TEST(Simulation, TimeBudgetCoversEveryRobotStepAfterTheWarmup) {
+  Config faulty = smallConfig();
+  faulty.allocation.method = AllocationMethod::kHungarian;
+  faulty.planning.method = PlanningMethod::kPibt;
+  faulty.execution.delay_probability = 0.2;
+  faulty.faults.packet_loss = 0.05;
+  for (const Config& c : {smallConfig(), faulty}) {
+    const RunSummary s = Simulation(c).run().summary;
+    const GridMap map = GridMap::fromFile(c.map.file.string());
+    const int64_t measured = s.steps_run - s.warmup;
+    const std::string what(toString(c.planning.method));
+    EXPECT_EQ(s.time_drive_to_pickup + s.time_drive_loaded + s.time_drive_free + s.time_service +
+                  s.time_traffic + s.time_station_wait + s.time_idle + s.time_safety_stop +
+                  s.time_lost,
+              int64_t{c.fleet.size} * measured)
+        << what;
+    EXPECT_EQ(s.stations, static_cast<int32_t>(map.pickups().size() + map.dropoffs().size()));
+    EXPECT_LE(s.time_service, int64_t{s.stations} * measured) << what;  // one robot per station
+    EXPECT_GE(s.mean_wait_for_robot_steps, 0.0) << what;
+    EXPECT_GE(s.mean_to_pickup_steps, 0.0) << what;
+    EXPECT_GE(s.mean_to_dropoff_steps, 0.0) << what;
+    EXPECT_NEAR(s.mean_wait_for_robot_steps + s.mean_to_pickup_steps + s.mean_to_dropoff_steps,
+                s.mean_completion_steps, 1e-9)
+        << what;
+  }
+  const RunSummary baseline = Simulation(smallConfig()).run().summary;
+  EXPECT_GT(baseline.time_safety_stop, 0);  // it deadlocks
+  const RunSummary late = Simulation(faulty).run().summary;
+  EXPECT_EQ(late.time_safety_stop, 0);
+  EXPECT_GT(late.completion_samples, 0);  // the baseline delivers nothing it measures
+  EXPECT_GT(late.time_lost, 0);
+  EXPECT_GT(late.time_traffic, 0);
+}
+
 }  // namespace
 }  // namespace fleet_core

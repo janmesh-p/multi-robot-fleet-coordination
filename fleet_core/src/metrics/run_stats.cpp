@@ -44,6 +44,10 @@ void RunStats::recordOrders(const std::vector<Task>& orders) {
   }
 }
 
+void RunStats::recordAssignments(Timestep t, const std::vector<TaskId>& orders) {
+  for (const TaskId id : orders) assigned_at_.emplace(id, t);
+}
+
 void RunStats::recordStep(const StepTruth& step, const TruthSnapshot& after,
                           const TickStats& tick) {
   mix(step.t);
@@ -72,6 +76,7 @@ void RunStats::recordStep(const StepTruth& step, const TruthSnapshot& after,
       ++duplicate_deliveries_;
     }
   }
+  for (const Assignment& p : step.pickups) picked_at_.emplace(p.task, step.t);
   delivered_total_ += static_cast<int64_t>(first.size());
   for (const Assignment& d : first) open_.erase(d.task);
   for (const MotionRecord& m : step.motion) {
@@ -89,6 +94,15 @@ void RunStats::recordStep(const StepTruth& step, const TruthSnapshot& after,
     const auto it = created_at_.find(d.task);
     if (it != created_at_.end() && it->second >= warmup_) {
       completion_steps_.push_back(static_cast<double>(step.t - it->second));
+      // A delivered order was assigned and picked up first; the fallbacks only keep the three
+      // phases adding up to the completion time.
+      const auto assigned = assigned_at_.find(d.task);
+      const auto picked = picked_at_.find(d.task);
+      const Timestep a = assigned != assigned_at_.end() ? assigned->second : it->second;
+      const Timestep p = picked != picked_at_.end() ? std::max(picked->second, a) : a;
+      wait_for_robot_sum_ += static_cast<double>(a - it->second);
+      to_pickup_sum_ += static_cast<double>(p - a);
+      to_dropoff_sum_ += static_cast<double>(step.t - p);
     }
   }
   for (size_t i = 0; i < step.motion.size(); ++i) {
@@ -99,6 +113,45 @@ void RunStats::recordStep(const StepTruth& step, const TruthSnapshot& after,
     if (o == MotionOutcome::kDelayed) ++delayed_steps_;
     if (o == MotionOutcome::kYield) ++yields_;
     if (o == MotionOutcome::kNoPermit) ++traffic_holds_;
+    switch (o) {  // the time budget: one class per robot-step
+      case MotionOutcome::kMoved:
+        if (!after.holding[i]) {
+          ++drive_free_;
+        } else if (after.status[i] == RobotStatus::kToDropoff ||
+                   after.status[i] == RobotStatus::kDropping) {
+          ++drive_loaded_;
+        } else {
+          ++drive_to_pickup_;
+        }
+        break;
+      case MotionOutcome::kService:
+        ++service_;
+        break;
+      case MotionOutcome::kPlannedWait:
+      case MotionOutcome::kNoPermit:
+      case MotionOutcome::kYield:
+        ++traffic_;
+        break;
+      case MotionOutcome::kHold:
+        ++station_wait_;
+        break;
+      case MotionOutcome::kIdle:
+        ++idle_;
+        break;
+      case MotionOutcome::kBlockedVertex:
+      case MotionOutcome::kBlockedSwap:
+      case MotionOutcome::kBlockedOccupied:
+        ++safety_stop_;
+        break;
+      case MotionOutcome::kDelayed:
+      case MotionOutcome::kNoCommand:
+      case MotionOutcome::kSafeStop:
+      case MotionOutcome::kDead:
+      case MotionOutcome::kBlockedCell:
+      case MotionOutcome::kInvalidStep:
+        ++lost_;
+        break;
+    }
   }
 }
 
@@ -139,6 +192,21 @@ RunSummary RunStats::summarize(const Config& config, Timestep steps_run, double 
   s.duplicate_deliveries = duplicate_deliveries_;
   s.no_command_steps = no_command_steps_;
   s.safe_stop_steps = safe_stop_steps_;
+  s.time_drive_to_pickup = drive_to_pickup_;
+  s.time_drive_loaded = drive_loaded_;
+  s.time_drive_free = drive_free_;
+  s.time_service = service_;
+  s.time_traffic = traffic_;
+  s.time_station_wait = station_wait_;
+  s.time_idle = idle_;
+  s.time_safety_stop = safety_stop_;
+  s.time_lost = lost_;
+  if (!completion_steps_.empty()) {
+    const auto n = static_cast<double>(completion_steps_.size());
+    s.mean_wait_for_robot_steps = wait_for_robot_sum_ / n;
+    s.mean_to_pickup_steps = to_pickup_sum_ / n;
+    s.mean_to_dropoff_steps = to_dropoff_sum_ / n;
+  }
   if (!completion_steps_.empty()) {
     s.max_completion_steps = *std::max_element(completion_steps_.begin(), completion_steps_.end());
   }

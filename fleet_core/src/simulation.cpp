@@ -254,6 +254,10 @@ RunResult Simulation::run(const std::optional<std::filesystem::path>& out_dir) c
     input.removed = removed;
 
     const TickOutput output = fleet.tick(input);
+    std::vector<TaskId> assigned;
+    assigned.reserve(output.assignments.size());
+    for (const AssignmentRecord& a : output.assignments) assigned.push_back(a.order);
+    stats.recordAssignments(t, assigned);
     for (const RobotId id : output.declared_dead) {
       if (robots.robots()[static_cast<size_t>(id)].alive) ++faulted.false_deaths;
     }
@@ -300,6 +304,7 @@ RunResult Simulation::run(const std::optional<std::filesystem::path>& out_dir) c
   result.summary.reconciled = faulted.reconciled;
   result.summary.rescued = faulted.rescued;
   result.summary.requeued = faulted.requeued;
+  result.summary.stations = static_cast<int32_t>(map_.pickups().size() + map_.dropoffs().size());
   const ProgressSummary p = progress.summarize(steps_run);
   result.summary.first_deadlock_step = p.first_deadlock_step;
   result.summary.deadlocks = p.deadlocks;

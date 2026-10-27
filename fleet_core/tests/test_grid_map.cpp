@@ -1,3 +1,4 @@
+#include <algorithm>
 #include <filesystem>
 #include <stdexcept>
 #include <vector>
@@ -105,6 +106,51 @@ TEST(GridMap, LoadsShippedMaps) {
   EXPECT_EQ(large.cols(), 75);
   EXPECT_EQ(large.pickups().size(), 10U);
   EXPECT_EQ(large.parking().size(), 150U);
+}
+
+// The Stage 7 variant: warehouse_large with the aisle cells of the outer columns made parking.
+TEST(GridMap, PocketMapChangesOnlyTheOuterAisleCells) {
+  const GridMap large = GridMap::fromFile((kRepo / "maps" / "warehouse_large.txt").string());
+  const GridMap pockets =
+      GridMap::fromFile((kRepo / "maps" / "warehouse_large_pockets.txt").string());
+  ASSERT_EQ(pockets.rows(), large.rows());
+  ASSERT_EQ(pockets.cols(), large.cols());
+  EXPECT_EQ(pockets.pickups(), large.pickups());
+  EXPECT_EQ(pockets.dropoffs(), large.dropoffs());
+  int changed = 0;
+  for (int32_t i = 0; i < large.cellCount(); ++i) {
+    const Cell c = large.cellAt(i);
+    if (pockets.kind(c) == large.kind(c)) continue;
+    ++changed;
+    EXPECT_TRUE(c.col == 0 || c.col == large.cols() - 1) << c.row << "," << c.col;
+    EXPECT_EQ(large.kind(c), '.');
+    EXPECT_EQ(pockets.kind(c), 'R');
+  }
+  EXPECT_EQ(changed, 38);
+  ASSERT_EQ(pockets.parking().size(), large.parking().size() + 38);
+  // Homes are the first parking cells in row-major order: the same for up to 75 robots.
+  for (size_t i = 0; i < 75; ++i) EXPECT_EQ(pockets.parking()[i], large.parking()[i]);
+  EXPECT_NE(pockets.parking()[75], large.parking()[75]);
+  // With 100 robots, 25 of the 38 new parking cells are homes.
+  EXPECT_EQ(std::count_if(pockets.parking().begin(), pockets.parking().begin() + 100,
+                          [&](const Cell& c) { return large.kind(c) == '.'; }),
+            25);
+}
+
+// No path passes through a station or parking cell, so one with no aisle next to it is cut off:
+// a robot that lives there never leaves.
+TEST(GridMap, EveryEndpointOnAShippedMapHasAnAisleNext) {
+  for (const auto& entry : std::filesystem::directory_iterator(kRepo / "maps")) {
+    const GridMap map = GridMap::fromFile(entry.path().string());
+    for (int32_t i = 0; i < map.cellCount(); ++i) {
+      const Cell c = map.cellAt(i);
+      if (!map.isEndpoint(c)) continue;
+      const std::vector<Cell> next = map.neighbors(c);
+      EXPECT_TRUE(
+          std::any_of(next.begin(), next.end(), [&](const Cell& n) { return !map.isEndpoint(n); }))
+          << entry.path().filename() << " " << c.row << "," << c.col;
+    }
+  }
 }
 
 }  // namespace

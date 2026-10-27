@@ -78,6 +78,14 @@ jobs:
       - name: Fuzz harness finds no failure
         run: ./build/fuzz_sim --cases ${{ matrix.fuzz_cases }} --seed 1 --out build/fuzz_failures
 
+      - name: README tables match the evidence
+        if: matrix.name == 'release'
+        run: python3 benchmarks/scripts/evidence.py tables --check
+
+      - name: One run of every benchmark suite matches its evidence
+        if: matrix.name == 'release'
+        run: python3 benchmarks/scripts/evidence.py verify --sample 1
+
   format:
     runs-on: ubuntu-22.04
     steps:

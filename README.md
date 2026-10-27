@@ -4,8 +4,11 @@ Warehouse multi-agent pickup and delivery (MAPD): task allocation, lifelong mult
 finding, traffic management, and fault recovery for up to 100 robots. Grid simulator for scale,
 Isaac Sim for physics, desk hardware in the loop.
 
-**Status:** Stage 6 (faults, fuzz harness) done. With up to three in ten reports and commands
-lost, four coordinated planners ran 320 simulated hours without a safety stop or a frozen run, and
+**Status:** Stage 7 (benchmarks and evidence) done. With 100 robots on the large map, robots
+spend 64% to 65% of their time holding an order, waiting for a station turn. Parking cells next
+to the stations raised orders per hour by 27% to 34% with 50 robots, in every seed
+([numbers](#benchmarks-and-evidence-stage-7)). Every table in this README is rebuilt from
+committed runs, and CI checks them. With up to three in ten reports and commands lost, four coordinated planners ran 320 simulated hours without a safety stop or a frozen run, and
 1,000 random scenarios with deaths, outages, and lost messages passed every check
 ([numbers](#faults-stage-6)). Robots that miss up to one step in three ran 320 simulated hours
 without a safety stop. With the traffic rules off, robot safety stopped them 44,170 times at one
@@ -70,11 +73,15 @@ python3 benchmarks/scripts/replay_gif.py benchmarks/results/default --end 300
 Nearest allocation and independent A* on `warehouse_small`: 5, 10 and 25 robots, seeds 1 to 5,
 one simulated hour per run (about 360 orders each).
 
+<!-- table:baseline -->
+
 | Robots | Runs that deadlocked | First deadlock, median step | Runs that froze | Frozen from, median step | Orders delivered per run, mean |
 |---:|---:|---:|---:|---:|---:|
 | 5 | 5 of 5 | 89 | 5 of 5 | 190 | 4.4 |
 | 10 | 5 of 5 | 58 | 5 of 5 | 179 | 5.4 |
 | 25 | 5 of 5 | 58 | 5 of 5 | 171 | 5.2 |
+
+<!-- /table -->
 
 - All 25 deadlocks are two robots head-on in a one-cell aisle.
 - Five broke later, each because one robot's goal changed: a station turn came up (four times)
@@ -111,20 +118,24 @@ matrices.
 Both allocators solved the same random rounds on `warehouse_small`: robots on random free cells,
 orders at random stations. The table compares the total distance from robots to their pickups.
 
+<!-- table:allocation -->
+
 | Robots | Waiting orders | Nearest, mean total | Hungarian, mean total | Hungarian lower by | Rounds where Hungarian is strictly better | Hungarian solve, p95 |
 |---:|---:|---:|---:|---:|---:|---:|
-| 5 | 5 | 116.2 | 109.4 | 5.9% | 72.6% | 0.001 ms |
+| 5 | 5 | 116.2 | 109.4 | 5.9% | 72.6% | 0.002 ms |
 | 10 | 10 | 223.9 | 210.4 | 6.0% | 95.4% | 0.005 ms |
-| 25 | 25 | 543.8 | 516.8 | 5.0% | 99.9% | 0.040 ms |
+| 25 | 25 | 543.8 | 516.8 | 5.0% | 99.9% | 0.035 ms |
 | 5 | 10 | 114.2 | 101.2 | 11.4% | 98.2% | 0.002 ms |
-| 10 | 20 | 224.7 | 201.4 | 10.4% | 100.0% | 0.007 ms |
-| 25 | 50 | 540.6 | 499.7 | 7.6% | 100.0% | 0.055 ms |
+| 10 | 20 | 224.7 | 201.4 | 10.4% | 100.0% | 0.010 ms |
+| 25 | 50 | 540.6 | 499.7 | 7.6% | 100.0% | 0.062 ms |
+
+<!-- /table -->
 
 - 1000 rounds per row, seed 1. Hungarian is never worse; the benchmark stops with an error if it
   ever is.
 - With more orders than robots, nearest always serves the oldest orders, while the matching may
   pick closer ones first, so part of that gain is order choice, not only who-goes-where.
-- On `warehouse_large`, 100 robots and 100 orders take 1.1 ms at p95 (200 rounds).
+- On `warehouse_large`, 100 robots and 100 orders take 0.75 ms at p95 (200 rounds).
 - Solve times are wall time on one core of the build machine; every other number depends only
   on the seed.
 
@@ -177,6 +188,8 @@ in steady state, mean over the seeds. 0.1 orders per step offers 360 orders per 
 720. Measured again on the Stage 5 code, with the starvation guard on: it changes a run only once
 an order has waited 600 steps, so the 25-robot runs at 0.1 orders per step are the same runs.
 
+<!-- table:planning_small -->
+
 | Planner | 0.1/step, 5 robots | 10 robots | 25 robots | 0.2/step, 5 robots | 10 robots | 25 robots |
 |---|---:|---:|---:|---:|---:|---:|
 | `independent_astar` | 0.1 | 0.0 | 0.0 | 0.0 | 0.0 | 0.0 |
@@ -186,6 +199,8 @@ an order has waited 600 steps, so the 25-robot runs at 0.1 orders per step are t
 | `ecbs` | 185.4 | 348.2 | 359.5 | 185.2 | 352.9 | 653.3 |
 | `cbs` | 186.7 | 316.4 | not run | 186.4 | 294.8 | not run |
 
+<!-- /table -->
+
 - `pibt`, `windowed_coop_astar`, `prioritized`, and `ecbs`: 240 runs here and 36 on
   `warehouse_large` below, with no robot-safety stop, no violation, and no frozen run.
   `independent_astar` froze all 60 of its runs.
@@ -194,8 +209,8 @@ an order has waited 600 steps, so the 25-robot runs at 0.1 orders per step are t
 - PIBT delivers least: 14% below `windowed_coop_astar` at 10 robots and 0.1 orders per step, 23%
   below at 25 robots and 0.2. In a one-cell aisle the robot that gives way backs up to the next
   junction and then comes back, where the other planners wait or take another aisle. It is the
-  fastest planner: 0.18 ms per call at p95 with 25 robots and 0.2 orders per step, against
-  0.27 ms for `windowed_coop_astar`, 0.38 ms for `prioritized`, and 2.6 ms for `ecbs`.
+  fastest planner: 0.25 ms per call at p95 with 25 robots and 0.2 orders per step, against
+  0.33 ms for `windowed_coop_astar`, 0.44 ms for `prioritized`, and 2.85 ms for `ecbs`.
 - ECBS delivers most at 25 robots and 0.2 orders per step, ahead of `windowed_coop_astar` in all
   10 seeds.
 - CBS finds the least total cost in each window, but two robots meeting head-on in a one-cell
@@ -203,22 +218,27 @@ an order has waited 600 steps, so the 25-robot runs at 0.1 orders per step are t
   robots and 0.1 orders per step, 2,994 of its 9,598 calls ran out of budget, and 2 of the 10
   runs froze: once every robot has stopped, the same failing call repeats. At 0.2, 3 of 10 runs
   froze (1 of 10 before the starvation guard). Not run at 25 robots.
-- Planning times are wall time on one core of the build machine, the mean of each run's p95;
-  every other number depends only on the seed. Two benchmark processes shared the machine's two
-  cores, so the times run higher than in Stage 4.
+- Planning times are wall time on one core of the build machine, the mean of each run's p95,
+  from the Stage 7 evidence run, where two benchmark processes shared the machine's two cores.
+  Every other number depends only on the seed.
 
 `warehouse_large`, 0.5 orders per step (1,800 per hour offered), seeds 1 to 3:
 
+<!-- table:planning_large -->
+
 | Planner | 25 robots | 50 robots | 100 robots | Planning p95 at 100 robots |
 |---|---:|---:|---:|---:|
-| `pibt` | 399.2 | 561.6 | 501.6 | 0.70 ms |
-| `windowed_coop_astar` | 434.8 | 649.6 | 574.8 | 0.75 ms |
-| `prioritized` | 441.2 | 665.6 | 576.4 | 1.95 ms |
-| `ecbs` | 430.8 | 650.4 | 554.0 | 9.27 ms |
+| `pibt` | 399.2 | 561.6 | 501.6 | 1.10 ms |
+| `windowed_coop_astar` | 434.8 | 649.6 | 574.8 | 0.94 ms |
+| `prioritized` | 441.2 | 665.6 | 576.4 | 2.28 ms |
+| `ecbs` | 430.8 | 650.4 | 554.0 | 11.39 ms |
+
+<!-- /table -->
 
 Every planner delivers less with 100 robots than with 50. The map has 150 parking cells and 100
 are homes, which leaves 50 to wait on near its 20 stations; robots that find none wait at home
-and drive over when their turn comes. Stage 7 measures where the time goes.
+and drive over when their turn comes. [Stage 7](#benchmarks-and-evidence-stage-7) measures
+where the time goes.
 
 What this does not show: robots that run late and closed aisles
 ([Stage 5](#execution-and-traffic-stage-5)), lost messages and dead robots
@@ -269,6 +289,8 @@ the rules that keep them apart anyway.
 per run, seeds 1 to 10. Orders per hour in steady state, mean over the seeds, by the chance that a
 robot misses a step. Column 0 is the Stage 4 table.
 
+<!-- table:delay -->
+
 | Robots | Planner | 0 | 0.05 | 0.1 | 0.2 | 0.3 |
 |---:|---|---:|---:|---:|---:|---:|
 | 10 | `pibt` | 298.9 | 281.0 | 261.8 | 229.0 | 199.7 |
@@ -280,6 +302,8 @@ robot misses a step. Column 0 is the Stage 4 table.
 | 25 | `prioritized` | 358.7 | 359.2 | 358.4 | 357.4 | 357.0 |
 | 25 | `ecbs` | 359.5 | 359.0 | 359.2 | 359.3 | 358.0 |
 
+<!-- /table -->
+
 - No safety stop and no violation in the 320 runs with late robots.
 - With 10 robots the robots are the limit, so missed steps cost deliveries: 7% to 12% fewer at
   0.1, 18% to 23% fewer at 0.2. With 25 robots there is slack: `windowed_coop_astar`,
@@ -288,12 +312,16 @@ robot misses a step. Column 0 is the Stage 4 table.
 Which rule does the work, at one missed step in ten: the four planners above with 10 and 25
 robots, 80 runs per row.
 
+<!-- table:rules -->
+
 | Rules on | Robot-safety stops | Cycles replanned per run, 10 / 25 robots |
 |---|---:|---:|
 | both (the default) | 0 | 0 / 0 |
 | dependency graph only | 0 | 0 / 0 |
 | reservations only | 0 | 13.5 / 27.9 |
 | neither | 44,170 | 0 / 0 |
+
+<!-- /table -->
 
 - With the dependency graph on, reservations never changed a decision: the same 80 runs, down to
   the log hash. They matter when plans are made apart (next table).
@@ -305,6 +333,8 @@ robots, 80 runs per row.
 Planning to goals (rolling replanning off) with one missed step in ten: `prioritized` and `ecbs`
 with 10 and 25 robots and `cbs` with 10, 50 runs per row.
 
+<!-- table:goals -->
+
 | Rules | Frozen runs | Robot-safety stops | Orders per hour |
 |---|---:|---:|---:|
 | reservations and recovery (the default) | 0 | 0 | 334 to 359 |
@@ -312,11 +342,15 @@ with 10 and 25 robots and `cbs` with 10, 50 runs per row.
 | no deadlock recovery | 50 | 0 | 0.4 to 17 |
 | no reservations | 50 | 1,052,387 | 0.6 to 12.5 |
 
+<!-- /table -->
+
 One `cbs` run with recovery had a cycle that lasted at least 10 steps, so the stall monitor counts
 a deadlock. It broke later, and no run froze.
 
 Starvation guard, mean over the four planners and 10 seeds, guard on / off. Only 0.1 orders per
 step with 25 robots keeps up with every order.
+
+<!-- table:guard -->
 
 | Orders per step | Robots | Oldest open order at the end, steps | Slowest delivery, steps | Orders per hour |
 |---:|---:|---:|---:|---:|
@@ -326,6 +360,8 @@ step with 25 robots keeps up with every order.
 | 0.2 | 5 | 2,719 / 2,880 | 2,707 / 2,829 | 182.4 / 186.5 |
 | 0.2 | 10 | 1,952 / 2,233 | 1,949 / 2,209 | 339.2 / 343.9 |
 | 0.2 | 25 | 853 / 938 | 885 / 983 | 583.0 / 587.2 |
+
+<!-- /table -->
 
 - Where robots keep up, no order waits 600 steps and nothing changes.
 - Under overload the oldest open order is 6% to 15% younger with the guard, and up to 2.2% fewer
@@ -398,6 +434,8 @@ robots off, and kills them. The coordinator learns of all three only from the re
 per run, seeds 1 to 10. Orders per hour in steady state, mean over the seeds, by the chance that
 a message is lost. Column 0 is the Stage 4 table.
 
+<!-- table:loss -->
+
 | Robots | Planner | 0 | 0.05 | 0.1 | 0.2 | 0.3 |
 |---:|---|---:|---:|---:|---:|---:|
 | 10 | `pibt` | 298.9 | 264.0 | 233.2 | 181.3 | 135.8 |
@@ -408,6 +446,8 @@ a message is lost. Column 0 is the Stage 4 table.
 | 25 | `windowed_coop_astar` | 359.2 | 358.0 | 356.8 | 353.8 | 276.2 |
 | 25 | `prioritized` | 358.7 | 357.8 | 358.0 | 351.7 | 277.2 |
 | 25 | `ecbs` | 359.5 | 358.4 | 358.8 | 357.6 | 310.1 |
+
+<!-- /table -->
 
 - No safety stop, no violation, and no frozen run in the 320 runs with lost messages.
 - With 10 robots every lost command costs a step: 8% to 12% fewer deliveries at one message in
@@ -421,6 +461,8 @@ a message is lost. Column 0 is the Stage 4 table.
 Faults together: `benchmarks/configs/faults.yaml` is the planning scenario with one message in
 ten lost, robot 0 dying at step 600 and robot 3 at step 1800, robot 5 out of touch for 60 steps
 from step 900, and robot 7 for 3 steps from step 2400. Orders per hour, mean over seeds 1 to 10.
+
+<!-- table:faults -->
 
 | Robots | Planner | Replanning | No faults | Faults |
 |---:|---|---|---:|---:|
@@ -436,6 +478,8 @@ from step 900, and robot 7 for 3 steps from step 2400. Orders per hour, mean ove
 | 25 | `ecbs` | rolling | 359.5 | 358.1 |
 | 25 | `prioritized` | to goals | 358.8 | 358.2 |
 | 25 | `ecbs` | to goals | 358.9 | 357.8 |
+
+<!-- /table -->
 
 - No safety stop, no violation, and no frozen run in the 120 runs.
 - Every run declared its two dead robots dead, and robot 5 too, a minute out of touch: a false
@@ -473,6 +517,160 @@ done
 ./build/bench_planning --config benchmarks/configs/faults.yaml --planners prioritized,ecbs \
   --fleet 10,25 --seeds 1-10 --disable rolling_replanning
 ./build/fuzz_sim --cases 1000 --seed 1
+```
+
+## Benchmarks and evidence (Stage 7)
+
+Stage 7 measures where the robot time goes, tests one change to the large map, and ties every
+table in this README to the runs behind it.
+
+- Time budget: every robot-step after the warmup falls in exactly one class, so the classes add
+  up to the fleet size times the measured steps. Moving: to a pickup (holding an order it has not
+  picked up), loaded, or free (no order). Not moving: service at a station; traffic (a planned
+  wait, a traffic hold, or a yield); station wait (holding an order at the end of its path, which
+  ends on a waiting cell or at home until the robot's station turn comes); idle; robot-safety
+  stops; and lost steps (late, no command, safe stop, dead, a blocked cell). `bench_planning`
+  prints the shares and writes the counts to its CSV, and `run_sim` prints them.
+- Order phases: from arrival to the first assignment, then to the pickup, then to the delivery.
+  The three means add up to the mean completion time.
+- Stations busy: service steps over station-steps after the warmup.
+- None of this is in `summary.csv`, and no run changed: the baseline reference still matches, and
+  every benchmark above that Stage 6 also ran gives the same log hash, run for run (1,936 runs).
+
+Where the time goes on `warehouse_large`, 0.5 orders per step (1,800 offered per hour), seeds 1
+to 10: the Stage 4 runs and seven more seeds. Share of the robot-steps after the warmup, in
+percent:
+
+<!-- table:budget -->
+
+| Robots | Planner | Orders per hour | To pickup | Loaded | Service | Traffic | Station wait | Stations busy |
+|---:|---|---:|---:|---:|---:|---:|---:|---:|
+| 25 | `pibt` | 400.9 | 46.7 | 45.2 | 1.8 | 0.6 | 5.7 | 2.2 |
+| 25 | `windowed_coop_astar` | 437.5 | 48.5 | 44.8 | 1.9 | 0.2 | 4.6 | 2.4 |
+| 25 | `prioritized` | 442.0 | 47.7 | 45.3 | 2.0 | 0.2 | 4.8 | 2.5 |
+| 25 | `ecbs` | 433.2 | 47.6 | 45.7 | 1.9 | 0.2 | 4.6 | 2.4 |
+| 50 | `pibt` | 551.8 | 37.7 | 35.2 | 1.2 | 0.9 | 25.0 | 3.1 |
+| 50 | `windowed_coop_astar` | 649.6 | 39.5 | 34.6 | 1.4 | 0.4 | 24.1 | 3.6 |
+| 50 | `prioritized` | 656.9 | 38.9 | 34.9 | 1.5 | 0.4 | 24.4 | 3.6 |
+| 50 | `ecbs` | 642.4 | 38.5 | 35.9 | 1.4 | 0.3 | 23.8 | 3.6 |
+| 100 | `pibt` | 507.7 | 17.7 | 17.5 | 0.6 | 0.5 | 63.7 | 2.9 |
+| 100 | `windowed_coop_astar` | 578.0 | 18.1 | 17.2 | 0.7 | 0.2 | 63.8 | 3.3 |
+| 100 | `prioritized` | 579.1 | 17.7 | 17.3 | 0.7 | 0.2 | 64.3 | 3.3 |
+| 100 | `ecbs` | 554.4 | 17.0 | 17.4 | 0.6 | 0.2 | 64.8 | 3.2 |
+
+<!-- /table -->
+
+- No robot-step was free, idle, a robot-safety stop, or lost. Every fleet here is overloaded (at
+  most 905 of the 1,800 orders per hour delivered), so a robot always holds an order.
+- With 25 robots, robots drive 92% to 93% of the time. With 100 robots they drive 34% to 35% of
+  the time and spend 64% to 65% in station wait.
+- The stations serve a robot 2% to 4% of the time: a visit takes 2 steps. A station takes one
+  robot at a time, a robot joins the queue when it is assigned, and the robot at the front holds
+  the turn while it drives over. So a queue moves at the pace of driving, not of service.
+- From assignment to delivery, an order took 201 to 222 steps with 25 robots and 567 to 625
+  with 100 (order phases, mean by planner). Orders waited longer than that for a robot, 1,348 to
+  2,318 steps: every fleet is overloaded, so the backlog grows through the run.
+
+One change to test: `maps/warehouse_large_pockets.txt` makes 38 aisle cells of the outer columns
+parking cells, 36 of them next to a station, so a robot can wait for its turn one step away.
+Stations and orders stay the same. Homes are the first parking cells in row-major order, so they
+stay the same for 25 and 50 robots; with 100 robots, 25 of the 38 new cells are homes, which
+leaves 13 for waiting. A first version also made the cells next to the four corners parking.
+That cut the corner parking cells off, since no path passes through parking, and the robot whose
+home was (0, 0) never moved. A test now checks every shipped map for a station or parking cell
+with no aisle next to it.
+
+Orders per hour, mean over seeds 1 to 10, and the per-seed difference, pockets minus
+`warehouse_large`:
+
+<!-- table:pockets -->
+
+| Robots | Planner | warehouse_large | Pockets | Difference | 95% interval | Seeds better | Station wait %, large / pockets |
+|---:|---|---:|---:|---:|---:|---:|---:|
+| 25 | `pibt` | 400.9 | 424.9 | +24.0 | +18.8 to +28.7 | 10 of 10 | 5.7 / 4.7 |
+| 25 | `windowed_coop_astar` | 437.5 | 489.5 | +52.0 | +49.4 to +54.2 | 10 of 10 | 4.6 / 2.9 |
+| 25 | `prioritized` | 442.0 | 492.5 | +50.5 | +47.3 to +53.3 | 10 of 10 | 4.8 / 2.8 |
+| 25 | `ecbs` | 433.2 | 481.1 | +47.9 | +45.6 to +50.2 | 10 of 10 | 4.6 / 3.1 |
+| 50 | `pibt` | 551.8 | 699.2 | +147.5 | +135.4 to +159.5 | 10 of 10 | 25.0 / 13.9 |
+| 50 | `windowed_coop_astar` | 649.6 | 870.8 | +221.3 | +213.6 to +229.4 | 10 of 10 | 24.1 / 9.1 |
+| 50 | `prioritized` | 656.9 | 879.6 | +222.7 | +210.4 to +233.5 | 10 of 10 | 24.4 / 9.4 |
+| 50 | `ecbs` | 642.4 | 840.4 | +198.0 | +191.3 to +204.2 | 10 of 10 | 23.8 / 10.4 |
+| 100 | `pibt` | 507.7 | 560.5 | +52.8 | +36.2 to +68.3 | 9 of 10 | 63.7 / 62.3 |
+| 100 | `windowed_coop_astar` | 578.0 | 652.1 | +74.0 | +61.3 to +88.7 | 10 of 10 | 63.8 / 61.9 |
+| 100 | `prioritized` | 579.1 | 659.9 | +80.8 | +67.6 to +93.4 | 10 of 10 | 64.3 / 61.8 |
+| 100 | `ecbs` | 554.4 | 634.4 | +80.0 | +68.3 to +90.7 | 10 of 10 | 64.8 / 62.4 |
+
+<!-- /table -->
+
+- The pockets delivered more in 119 of 120 paired runs: 6% to 12% more with 25 robots, 27% to
+  34% with 50, and 10% to 14% with 100. With 50 robots, station wait fell from 24% to 25% of the
+  robot time to 9% to 14%.
+- With 100 robots, station wait stayed near 62%. On the pocket map too, 100 robots delivered 139
+  to 220 fewer orders per hour than 50, in every seed. This change is not enough at that density,
+  and the budget does not say what limits it.
+- None of the 240 runs on either map had a robot-safety stop, a violation, or a frozen run.
+
+The comparisons the sections above make, with intervals. Per-seed difference in orders per hour
+on seeds 1 to 10:
+
+<!-- table:intervals -->
+
+| Comparison | Map | Orders per step | Robots | Difference | 95% interval | Seeds better |
+|---|---|---:|---:|---:|---:|---:|
+| `pibt` minus `windowed_coop_astar` | `warehouse_small` | 0.1 | 10 | -47.9 | -52.2 to -42.5 | 0 of 10 |
+| `pibt` minus `windowed_coop_astar` | `warehouse_small` | 0.2 | 25 | -137.0 | -149.9 to -123.4 | 0 of 10 |
+| `ecbs` minus `windowed_coop_astar` | `warehouse_small` | 0.2 | 25 | +51.1 | +39.8 to +64.3 | 10 of 10 |
+| `ecbs` minus `prioritized` | `warehouse_small` | 0.2 | 25 | +41.8 | +33.2 to +48.7 | 10 of 10 |
+| 100 robots minus 50, `pibt` | `warehouse_large` | 0.5 | 100, 50 | -44.0 | -52.1 to -35.4 | 0 of 10 |
+| 100 robots minus 50, `windowed_coop_astar` | `warehouse_large` | 0.5 | 100, 50 | -71.5 | -82.2 to -59.0 | 0 of 10 |
+| 100 robots minus 50, `prioritized` | `warehouse_large` | 0.5 | 100, 50 | -77.8 | -86.9 to -70.0 | 0 of 10 |
+| 100 robots minus 50, `ecbs` | `warehouse_large` | 0.5 | 100, 50 | -88.0 | -97.2 to -75.7 | 0 of 10 |
+
+<!-- /table -->
+
+Every one holds in every seed, and 100 robots deliver less than 50 on `warehouse_large` with
+every planner over 10 seeds, as over the 3 seeds of Stage 4.
+
+![Orders per hour by fleet size on both maps, one panel per planner](docs/figures/throughput_large.png)
+
+![Time budget by map and fleet size for prioritized](docs/figures/time_budget_large.png)
+
+![Orders per hour by the chance of a missed step and of a lost message](docs/figures/delay_loss.png)
+
+In the last figure `windowed_coop_astar`, `prioritized`, and `ecbs` lie almost on top of each
+other; the tables in Stages 5 and 6 have their numbers.
+
+![Planning time per call at p95 by fleet size on warehouse_large](docs/figures/planning_time_large.png)
+
+How the evidence works:
+
+- `benchmarks/evidence/` holds one CSV per benchmark suite, one row per run, as `bench_planning`
+  or `bench_allocation` writes it: 35 files, 2,140 planning runs. `evidence.py run` writes them
+  all, in about 21 minutes on two cores.
+- Each table in this README sits between markers, and `evidence.py tables` rebuilds it from those
+  CSVs. CI runs `tables --check`, which fails on any difference.
+- `evidence.py verify` runs the suites again and compares every column except timing, log hash
+  included. CI reruns one run of every suite. Planning and solve times depend on the machine and
+  its load; every other column depends only on the config and the seed.
+- Intervals: on seeds 1 to 10, two configs see the same orders, so their difference is paired by
+  seed. The 95% interval runs from the 2.5th to the 97.5th percentile of the mean difference over
+  10,000 resamples of the 10 differences (seed 0).
+- `plot_results.py` draws the figures from the same CSVs.
+
+What this does not show: other arrival rates and maps; other queue rules, such as giving a turn to
+the robot that arrives first; where station wait happens on the map, or how long a robot holding
+a turn drives (the budget counts steps per class, not their causes); and planning times on other
+machines. Ten paired differences give percentile intervals that run narrow, so read the
+intervals as a guide, not as a test.
+
+```bash
+python3 benchmarks/scripts/evidence.py run      # every suite, into benchmarks/evidence/
+python3 benchmarks/scripts/evidence.py tables   # rebuild the README tables; --check to compare
+python3 benchmarks/scripts/evidence.py verify   # rerun and compare; --sample 1 for one run each
+python3 benchmarks/scripts/evidence.py list     # every suite and its command
+pip install matplotlib && python3 benchmarks/scripts/plot_results.py
+./build/bench_planning --config benchmarks/configs/planning.yaml --fleet 25,50,100 \
+  --seeds 1-10 --rate 0.5 --map maps/warehouse_large_pockets.txt   # and maps/warehouse_large.txt
 ```
 
 ## Build and test (fleet_core)
@@ -539,10 +737,11 @@ fleet_ros/         ROS 2 adapter node
 sim_isaac/         Isaac Sim scene and bridge (Stage 8)
 firmware/          STM32F407 + CC3100 robot client (Stage 9a)
 perception/        D435 overhead grid detector (Stage 9b)
-benchmarks/        run configs, scripts, results, reference results
-maps/              generated warehouse maps: small (15x38, up to 25 robots), large (33x75,
-                   up to 100 robots)
-docs/              learning track spec: a learned travel-time cost for allocation
+benchmarks/        run configs, scripts, evidence (one CSV per README benchmark), reference
+                   results
+maps/              warehouse maps: small (15x38, up to 25 robots) and large (33x75, up to 100
+                   robots), both generated, and large_pockets (the Stage 7 variant of large)
+docs/              learning track spec (a learned travel-time cost for allocation), figures
 ```
 
 How to contribute: [CONTRIBUTING.md](CONTRIBUTING.md).
@@ -562,7 +761,7 @@ Apache License 2.0. See [LICENSE](LICENSE).
 | 4 | Lifelong MAPF, PIBT | done |
 | 5 | Execution and traffic | done |
 | 6 | Faults, fuzz harness | done |
-| 7 | Benchmarks and evidence | |
+| 7 | Benchmarks and evidence | done |
 | 8 | Isaac Sim | |
 | 9a | Hardware in the loop | |
 | 9b | Overhead perception | |

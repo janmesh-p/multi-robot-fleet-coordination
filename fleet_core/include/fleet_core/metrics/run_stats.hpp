@@ -61,6 +61,28 @@ struct RunSummary {
   int64_t no_command_steps{0};      // robot-steps waiting because no command arrived
   int64_t safe_stop_steps{0};       // robot-steps in safe stop
 
+  // Stage 7, steady state: where the robot time goes. Every robot-step after the warmup falls in
+  // exactly one of these, so they add up to fleet_size x (steps_run - warmup). Not in summary.csv.
+  int64_t time_drive_to_pickup{0};  // moved, holding an order it has not picked up yet
+  int64_t time_drive_loaded{0};     // moved, carrying an order
+  int64_t time_drive_free{0};       // moved without an order, for example home
+  int64_t time_service{0};          // picking or dropping at a station
+  int64_t time_traffic{0};          // waiting for other robots: a wait in its plan, a hold by the
+                                    // traffic rules, or a yield
+  int64_t time_station_wait{0};     // holding an order with no step left: waiting for its
+                                    // station turn, or for a new plan
+  int64_t time_idle{0};             // no order and nothing to do
+  int64_t time_safety_stop{0};      // stopped by robot safety
+  int64_t time_lost{0};             // late (execution noise), no command, safe stop, dead, or a
+                                    // blocked or invalid step
+  int32_t stations{0};              // pickup and dropoff cells: time_service over stations x
+                                    // measured steps is how busy the stations were
+  // The orders in mean_completion_steps, split at their first assignment and first pickup. The
+  // three means add up to mean_completion_steps.
+  double mean_wait_for_robot_steps{0.0};  // created to assigned
+  double mean_to_pickup_steps{0.0};       // assigned to picked up, station waits and service in
+  double mean_to_dropoff_steps{0.0};      // picked up to delivered, station waits and service in
+
   int64_t violations{0};
   bool aborted{false};
 
@@ -85,6 +107,8 @@ class RunStats {
   RunStats(int32_t fleet_size, Timestep warmup);
 
   void recordOrders(const std::vector<Task>& orders);
+  // Orders the coordinator assigned in this tick; only the first assignment of an order counts.
+  void recordAssignments(Timestep t, const std::vector<TaskId>& orders);
   void recordStep(const StepTruth& step, const TruthSnapshot& after, const TickStats& tick);
 
   RunSummary summarize(const Config& config, Timestep steps_run, double wall_seconds,
@@ -118,6 +142,21 @@ class RunStats {
   int64_t duplicate_deliveries_{0};
   int64_t no_command_steps_{0};
   int64_t safe_stop_steps_{0};
+  // Stage 7.
+  int64_t drive_to_pickup_{0};
+  int64_t drive_loaded_{0};
+  int64_t drive_free_{0};
+  int64_t service_{0};
+  int64_t traffic_{0};
+  int64_t station_wait_{0};
+  int64_t idle_{0};
+  int64_t safety_stop_{0};
+  int64_t lost_{0};
+  std::map<TaskId, Timestep> assigned_at_{};  // first assignment
+  std::map<TaskId, Timestep> picked_at_{};    // first pickup
+  double wait_for_robot_sum_{0.0};
+  double to_pickup_sum_{0.0};
+  double to_dropoff_sum_{0.0};
 };
 
 }  // namespace fleet_core

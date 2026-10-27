@@ -11,6 +11,7 @@
 // line per planner and fleet size. Exit codes: 0 done, 1 error, 2 bad arguments, 5 a coordinated
 // planner had a violation or an aborted run (not checked with --record, for ablations that
 // expect violations).
+#include <array>
 #include <cstdint>
 #include <cstdio>
 #include <exception>
@@ -123,9 +124,36 @@ std::string csvRow(const RunSummary& s, double delay, double loss, const std::st
       << ',' << s.max_completion_steps << ',' << s.oldest_open_steps << ',' << loss << ','
       << s.reports_lost << ',' << s.commands_lost << ',' << s.robots_died << ',' << s.declared_dead
       << ',' << s.false_deaths << ',' << s.reconciled << ',' << s.rescued << ',' << s.requeued
-      << ',' << s.duplicate_deliveries << ',' << s.no_command_steps << ',' << s.safe_stop_steps;
+      << ',' << s.duplicate_deliveries << ',' << s.no_command_steps << ',' << s.safe_stop_steps
+      << ',' << s.stations << ',' << s.time_drive_to_pickup << ',' << s.time_drive_loaded << ','
+      << s.time_drive_free << ',' << s.time_service << ',' << s.time_traffic << ','
+      << s.time_station_wait << ',' << s.time_idle << ',' << s.time_safety_stop << ','
+      << s.time_lost << ',' << s.mean_wait_for_robot_steps << ',' << s.mean_to_pickup_steps << ','
+      << s.mean_to_dropoff_steps;
   return out.str();
 }
+
+// Where the robot time went, summed over seeds (Stage 7).
+struct TimeBudget {
+  std::array<int64_t, 9> steps{};  // in the order of the console table
+  void add(const RunSummary& s) {
+    const std::array<int64_t, 9> run{s.time_drive_to_pickup,
+                                     s.time_drive_loaded,
+                                     s.time_drive_free,
+                                     s.time_service,
+                                     s.time_traffic,
+                                     s.time_station_wait,
+                                     s.time_idle,
+                                     s.time_safety_stop,
+                                     s.time_lost};
+    for (size_t k = 0; k < steps.size(); ++k) steps[k] += run[k];
+  }
+  double share(size_t k) const {
+    int64_t total = 0;
+    for (const int64_t v : steps) total += v;
+    return total == 0 ? 0.0 : 100.0 * static_cast<double>(steps[k]) / static_cast<double>(total);
+  }
+};
 
 }  // namespace
 
@@ -224,7 +252,9 @@ int main(int argc, char** argv) {
            "delayed_steps,yields,traffic_holds,deadlocks_resolved,max_completion_steps,"
            "oldest_open_steps,packet_loss,reports_lost,commands_lost,robots_died,declared_dead,"
            "false_deaths,reconciled,rescued,requeued,duplicate_deliveries,no_command_steps,"
-           "safe_stop_steps\n";
+           "safe_stop_steps,stations,time_drive_to_pickup,time_drive_loaded,time_drive_free,"
+           "time_service,time_traffic,time_station_wait,time_idle,time_safety_stop,time_lost,"
+           "mean_wait_for_robot_steps,mean_to_pickup_steps,mean_to_dropoff_steps\n";
     std::cout << "bench      " << base.run.name << " on " << map_name << ": "
               << toString(base.allocation.method) << " allocation, " << base.orders.arrival_rate
               << " orders per step, " << base.run.horizon_steps << " steps, window "
@@ -246,8 +276,10 @@ int main(int argc, char** argv) {
               << "                                     mean   mean steps    calls  ms, mean  "
                  " stops              runs  s, mean\n";
     bool clean = true;
+    std::vector<std::pair<std::string, TimeBudget>> budgets;
     for (const PlanningMethod method : methods) {
       for (const int32_t size : fleet_sizes) {
+        TimeBudget budget;
         std::vector<double> oph, completion, p95_ms, wall;
         int64_t failures = 0, violations = 0, stops = 0;
         int32_t frozen = 0, aborted = 0;
@@ -262,6 +294,7 @@ int main(int argc, char** argv) {
           csv << csvRow(s, c.execution.delay_probability, c.faults.packet_loss, disabled_text)
               << "\n";
           stops += s.conflicts;
+          budget.add(s);
           oph.push_back(s.orders_per_hour);
           completion.push_back(s.mean_completion_steps);
           p95_ms.push_back(s.planning_p95_ms);
@@ -279,7 +312,22 @@ int main(int argc, char** argv) {
                       static_cast<long long>(failures), mean(p95_ms), static_cast<long long>(stops),
                       static_cast<long long>(violations), frozen, mean(wall));
         std::cout << line << std::flush;
+        char name[48];
+        std::snprintf(name, sizeof(name), " %-20s %7d", std::string(toString(method)).c_str(),
+                      size);
+        budgets.emplace_back(name, budget);
       }
+    }
+    std::cout << "\n time, % of robot-steps after the warmup\n"
+                 " planner               robots  to pickup  loaded  free  service  traffic  "
+                 "station wait  idle  stops  lost\n";
+    for (const auto& [name, b] : budgets) {
+      char line[200];
+      std::snprintf(line, sizeof(line),
+                    "%s  %9.1f  %6.1f  %4.1f  %7.1f  %7.1f  %12.1f  %4.1f  %5.1f  %4.1f\n",
+                    name.c_str(), b.share(0), b.share(1), b.share(2), b.share(3), b.share(4),
+                    b.share(5), b.share(6), b.share(7), b.share(8));
+      std::cout << line;
     }
     if (!out_path.empty()) {
       const std::filesystem::path parent = std::filesystem::path(out_path).parent_path();
